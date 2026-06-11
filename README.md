@@ -80,6 +80,8 @@ Recipe guidance:
 Remember: keyframes overlap heavily — **never sum this CSV across frames**.
 That's what step 3 is for.
 
+![Output](counts_dmcount_sha/output.gif)
+
 ## 3. Whole-route total (strip summing)
 
 Requires: one continuous pass along the street, and step 2 run with
@@ -161,3 +163,9 @@ pass — crowds turn over during an event.
   people: increase `--upscale`; if overlays light up trees/lights instead,
   decrease it.
 - GPU is not required; CPU inference takes a few seconds per frame.
+
+## Extras
+### Converting output images to .gif
+brew install imagemagick
+cd /path/to/images
+magick *.jpg -delay 10 -loop 0 output.gif
