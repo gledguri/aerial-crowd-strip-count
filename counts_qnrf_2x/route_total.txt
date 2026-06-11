@@ -1,0 +1,8 @@
+video                                         : ScreenRecording_06-11-2026 00-01-02_1.mov
+keyframes                                     : 27
+cumulative ground advance (px / frame-heights): 2873 / 4.0
+people who exited the frame during the flight : 3072
+people still visible in the last keyframe     : 954
+ESTIMATED TOTAL ALONG THE ROUTE               : 4025
+
+Caveats: far-field people in the final frame are under-counted; crowd walking relative to the drone biases strips by roughly (walking speed / drone ground speed); night footage and compression push everything toward UNDER-counting.
