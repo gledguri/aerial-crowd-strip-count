@@ -1,38 +1,39 @@
 #!/usr/bin/env python3
 """
-Method 5: people/m² x measured route length (model-assisted Jacobs).
+Step 3: density estimate in physical units (people/m²).
 
 The crowd model under-counts on bad footage, but its MAP of where the
-crowd is stays good. So instead of trusting its absolute numbers, work in
-physical units: you measure the real-world length of the strip the drone
-covered (Google Maps / Earth, mapchecking.com), and this script converts
-the route mosaic into square meters:
+crowd is stays good. So this step anchors everything in real-world
+geometry. Give it ONE measurement you trust:
 
-  meters per pixel  = route length / mosaic height
-  crowd area (m²)   = pixels inside the crowd mask x (m/px)²
-  model density     = model people inside the mask / area    [people/m²]
+  --area-m2 A         the real occupied area in m² (measure on Google
+                      Maps/Earth or mapchecking.com) — preferred: the
+                      px->m scale is then calibrated so the crowd outline
+                      equals YOUR area;
+  --route-length-m L  ground length covered by the mosaic, bottom edge to
+                      top edge (used only if --area-m2 is not given).
 
-Then the total is anchored two independent ways:
-  - reference totals: area x standard Jacobs density classes
-    (0.5 loose / 1 walking / 2 slow shuffle / 4 packed people per m²)
-  - implied calibration: how much the model must be multiplied to reach
-    each class. Pick the class that matches what you SEE per segment in
-    the footage (density_slices.csv breaks it down along the route), and
-    you have a measured --calibrate factor for steps 3b/3c instead of a
-    guessed one.
+It then reports the crowd's density (model-implied people/m²): one single
+number if the density is roughly uniform along the route, or split into
+strips if it varies a lot. Strip geometry (length, width, area) is always
+written to jacobs_segments.csv — that file is the input of step 4, where
+you assign each strip the density class you SEE in the footage.
+
+NOTE on the densities: the model's absolute level runs LOW on night or
+compressed footage — treat its p/m² as a lower bound and the per-strip
+VARIATION as trustworthy.
 
 Usage:
-  python estimate_by_density.py --route-length-m L [VIDEO] keyframes/ counts/
-        [--use-frac 0.45] [--window 0.45] [--slice-px 60] [--no-autocrop]
-L is the ground distance in meters from the BOTTOM edge of route_mosaic.jpg
-to its TOP edge (= take-off point of the pass to the far edge of the last
-frame), not the whole street if the drone covered less.
+  python estimate_by_density.py --area-m2 15000 [VIDEO] keyframes/ counts/
+        [--segment-m 50] [--use-frac 0.45] [--window 0.45] [--no-autocrop]
+counts_dir must contain *_density.npy from count_crowd.py --save-density.
 
 Outputs (written into counts_dir):
-  route_area.jpg      - mosaic with the measured crowd area outlined (CHECK
-                        THIS: area drives everything)
-  density_slices.csv  - per route slice: width, area, model people, p/m²
-  density_report.txt  - areas, densities, reference totals, calibration
+  route_area.jpg       - mosaic with the crowd area outlined (CHECK THIS:
+                         the outline must hug the crowd)
+  jacobs_segments.csv  - per strip: length, width, area, model density,
+                         empty assumed_density column for you -> step 4
+  density_report.txt   - geometry, density estimate, reference classes
 """
 import argparse
 import csv
@@ -57,15 +58,20 @@ def main():
                     help="video file (default: the one video in input_video/)")
     ap.add_argument("keyframes")
     ap.add_argument("counts", help="dir with *_density.npy from count_crowd.py")
-    ap.add_argument("--route-length-m", type=float, required=True,
-                    help="measured ground length (m) covered by the mosaic, "
-                         "bottom edge to top edge")
+    ap.add_argument("--area-m2", type=float, default=None,
+                    help="YOUR measured occupied area in m²; calibrates the "
+                         "px->m scale (preferred)")
+    ap.add_argument("--route-length-m", type=float, default=None,
+                    help="measured ground length (m) covered by the mosaic; "
+                         "used only without --area-m2")
+    ap.add_argument("--segment-m", type=float, default=50.0,
+                    help="strip length (m) for the per-strip breakdown")
     ap.add_argument("--use-frac", type=float, default=0.45)
     ap.add_argument("--window", type=float, default=0.45)
-    ap.add_argument("--slice-px", type=int, default=60,
-                    help="slice size along the route for density_slices.csv")
     ap.add_argument("--no-autocrop", action="store_true")
     args = ap.parse_args()
+    if args.area_m2 is None and args.route_length_m is None:
+        ap.error("give --area-m2 (preferred) or --route-length-m")
     args.video = resolve_video(args.video)
     print(f"input video: {args.video}")
 
@@ -73,29 +79,61 @@ def main():
         args.video, args.keyframes, args.counts, args.use_frac,
         args.window, args.no_autocrop)
     CH, CW = avg.shape
-    s = args.route_length_m / CH  # meters per pixel (assumed isotropic)
 
     mask = crowd_mask(avg, CW).astype(bool) & seen
-    area_m2 = float(mask.sum()) * s * s
+    mask_px = float(mask.sum())
+    if args.area_m2:  # anchor the scale on the user's area measurement
+        s = (args.area_m2 / mask_px) ** 0.5
+        area_m2, anchor = args.area_m2, "YOUR area measurement"
+    else:
+        s = args.route_length_m / CH
+        area_m2, anchor = mask_px * s * s, "YOUR route length"
+    route_len_m = CH * s
     masked_total = float(avg[mask].sum())
     model_total = float(avg.sum())
     mean_density = masked_total / area_m2 if area_m2 > 0 else 0.0
 
-    # per-slice breakdown along the route (canvas bottom = route start)
-    slices_csv = os.path.join(args.counts, "density_slices.csv")
-    with open(slices_csv, "w", newline="") as fh:
+    # per-strip breakdown along the route (canvas bottom = route start)
+    seg_px = max(1, int(round(args.segment_m / s)))
+    segs = []
+    for start in range(0, CH, seg_px):
+        end = min(start + seg_px, CH)
+        rows = slice(CH - end, CH - start)
+        a = float(mask[rows].sum()) * s * s
+        people = float(avg[rows][mask[rows]].sum())
+        width = float(mask[rows].sum(axis=1).mean()) * s
+        segs.append(dict(start_m=start * s, end_m=end * s,
+                         length_m=(end - start) * s, width_m=width,
+                         area_m2=a, people=people,
+                         density=people / a if a > 0 else 0.0))
+
+    seg_csv = os.path.join(args.counts, "jacobs_segments.csv")
+    with open(seg_csv, "w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["route_start_m", "route_end_m", "crowd_width_m",
-                    "area_m2", "model_people", "model_people_per_m2"])
-        for top in range(0, CH, args.slice_px):
-            bot = min(top + args.slice_px, CH)
-            rows = slice(CH - bot, CH - top)  # canvas rows for this stretch
-            a = float(mask[rows].sum()) * s * s
-            people = float(avg[rows].sum())
-            width = float(mask[rows].sum(axis=1).mean()) * s
-            w.writerow([round(top * s, 1), round(bot * s, 1),
-                        round(width, 1), round(a, 1), round(people, 1),
-                        round(people / a, 2) if a > 0 else ""])
+        w.writerow(["segment", "start_m", "end_m", "length_m",
+                    "mean_width_m", "area_m2", "model_density_p_m2",
+                    "assumed_density_p_m2"])
+        for i, g in enumerate(segs):
+            w.writerow([f"strip{i:02d}", round(g["start_m"], 1),
+                        round(g["end_m"], 1), round(g["length_m"], 1),
+                        round(g["width_m"], 1), round(g["area_m2"], 1),
+                        round(g["density"], 2), ""])
+
+    # uniform or not? judge on strips that actually hold crowd
+    dens = [g["density"] for g in segs if g["width_m"] >= 2.0]
+    cv = float(np.std(dens) / np.mean(dens)) if dens else 0.0
+    if cv <= 0.30:
+        verdict = (f"density is roughly UNIFORM along the route "
+                   f"(spread {cv:.0%}):\n"
+                   f"  -> use ONE density: {mean_density:.2f} people/m2 "
+                   f"over {area_m2:,.0f} m2\n")
+    else:
+        lines = "".join(
+            f"  {g['start_m']:5.0f}-{g['end_m']:5.0f} m  "
+            f"width {g['width_m']:5.1f} m  area {g['area_m2']:7,.0f} m2  "
+            f"{g['density']:.2f} p/m2\n" for g in segs)
+        verdict = (f"density VARIES along the route (spread {cv:.0%}) — "
+                   f"use the per-strip values:\n{lines}")
 
     # QC image: the area everything is based on
     overlay = mosaic.copy()
@@ -104,7 +142,7 @@ def main():
     cv2.drawContours(overlay, contours, -1, (0, 255, 0), 2)
     font, scale = cv2.FONT_HERSHEY_SIMPLEX, CW / 900.0
     thick = max(2, int(round(scale * 2)))
-    text = (f"crowd area ~{area_m2:,.0f} m2 | scale {s * 100:.1f} cm/px | "
+    text = (f"crowd area {area_m2:,.0f} m2 | scale {s * 100:.1f} cm/px | "
             f"model {mean_density:.2f} p/m2")
     (tw, th), _ = cv2.getTextSize(text, font, scale, thick)
     org = ((CW - tw) // 2, th + max(12, CH // 80))
@@ -115,29 +153,26 @@ def main():
     area_jpg = os.path.join(args.counts, "route_area.jpg")
     cv2.imwrite(area_jpg, overlay, [cv2.IMWRITE_JPEG_QUALITY, 92])
 
-    ref_lines = ""
-    for c, name in CLASSES:
-        ref_lines += (f"  {c:3.1f} p/m2 {name:28s}: "
-                      f"{area_m2 * c:8,.0f} people  "
-                      f"(model would need x{c / mean_density:.1f})\n"
-                      if mean_density > 0 else "")
+    ref_lines = "".join(
+        f"  {c:3.1f} p/m2 {name:28s}: {area_m2 * c:8,.0f} people\n"
+        for c, name in CLASSES)
     summary = (
         f"video                                  : {args.video}\n"
-        f"route length (YOUR input)              : "
-        f"{args.route_length_m:.0f} m\n"
-        f"scale                                  : {s * 100:.1f} cm/px\n"
+        f"scale anchored on                      : {anchor}\n"
+        f"scale / implied route length           : {s * 100:.1f} cm/px / "
+        f"{route_len_m:.0f} m\n"
         f"crowd area (inside green outline)      : {area_m2:,.0f} m2\n"
         f"model people inside area / route total : {masked_total:,.0f} / "
         f"{model_total:,.0f}\n"
-        f"model implied mean density             : {mean_density:.2f} "
-        f"people/m2\n"
-        f"\nreference totals at standard density classes:\n{ref_lines}"
-        "\nHow to use this: open route_area.jpg and check the green outline "
-        "hugs the crowd (the area drives everything). Then look at the "
-        "footage segment by segment (density_slices.csv) and decide which "
-        "density class each stretch really is. The matching reference "
-        "total is your Jacobs estimate; the 'model would need xF' of your "
-        "chosen class is a MEASURED --calibrate factor for steps 3b/3c.\n")
+        f"\nDENSITY ESTIMATE (model-implied; absolute level is a LOWER "
+        f"bound on bad footage,\nthe per-strip variation is the "
+        f"trustworthy part):\n{verdict}"
+        f"\nfor orientation, the standard density classes over this area:\n"
+        f"{ref_lines}"
+        "\nNext (step 4): open route_area.jpg and check the green outline "
+        "hugs the crowd. Then fill the assumed_density_p_m2 column of "
+        "jacobs_segments.csv with the class you SEE per strip in the "
+        "footage and run jacobs_estimate.py on it.\n")
     report = os.path.join(args.counts, "density_report.txt")
     with open(report, "w") as fh:
         fh.write(summary)
@@ -145,7 +180,7 @@ def main():
     print("-" * 75)
     print(summary)
     print("saved:", area_jpg)
-    print("saved:", slices_csv)
+    print("saved:", seg_csv)
     print("saved:", report)
 
 

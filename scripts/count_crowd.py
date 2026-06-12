@@ -125,7 +125,7 @@ def label_clusters(overlay, d, min_cluster, tile_above=60.0):
 
 
 def save_overlay(img_path, density, out_path, count=None, clusters=False,
-                 min_cluster=3.0):
+                 min_cluster=3.0, label=None):
     import cv2
     import numpy as np
 
@@ -140,7 +140,8 @@ def save_overlay(img_path, density, out_path, count=None, clusters=False,
         d = d / d.max()
     heat = cv2.applyColorMap((d * 255).astype("uint8"), cv2.COLORMAP_JET)
     overlay = cv2.addWeighted(img, 0.55, heat, 0.45, 0)
-    label = None if count is None else f"~{count:,.0f} people"
+    if label is None and count is not None:
+        label = f"~{count:,.0f} people"
     if clusters and mass > 0:
         d_people = d / d.sum() * mass if d.sum() > 0 else d
         labeled, n = label_clusters(overlay, d_people, min_cluster)

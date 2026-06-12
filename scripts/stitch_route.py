@@ -117,7 +117,8 @@ def build_route_mosaic(video, keyframes, counts, use_frac=0.45, window=0.45,
 
     covered = cnt_near > 0
     avg = np.where(covered, sum_near / np.maximum(cnt_near, 1), far_val)
-    meta = dict(frames=frames, H=H, W=W, dys=dys, dxs=dxs, band=band)
+    meta = dict(frames=frames, H=H, W=W, dys=dys, dxs=dxs, band=band,
+                offy=offy, offx=offx)
     return mosaic, seen, avg, cnt_near, meta
 
 

@@ -12,17 +12,15 @@ by a drone flying along the route. It works on two kinds of input:
 The method in one paragraph: person-detectors (YOLO-style) fail on aerial
 crowds because each person is only a few pixels, so we use a crowd-density
 model (DM-Count, via the `lwcc` package) that predicts a density map whose
-sum is the people count. Because the drone flies along the street, every
-frame overlaps the next one, so summing frames would count people many
-times over. Instead the pipeline tracks how far the ground slides between
-frames (forward advance + sideways drift) and uses that alignment to count
-each person exactly once. Three estimators share that alignment: **strip
-summing** (each person counted once, from the single frame where they exit
-the bottom edge), **slice averaging** (each piece of ground counted as the
-average of the ~8-15 frames that saw it — recommended), and the **route
-mosaic** (slice averaging done in 2-D, plus the whole flight stitched into
-one picture). An independent area-x-density check (Jacobs method) is
-included to validate whatever number the model gives you.
+sum is the people count. The model's absolute numbers run LOW on bad
+footage, but its *map* of where the crowd is stays good — so the pipeline
+splits the problem: first anchor the crowd's geometry in real-world units
+with one measurement you make yourself (step 3) and turn it into an
+area-x-density estimate (step 4, the Jacobs method); independently compute
+the model's own route totals by tracking how far the ground slides between
+overlapping frames and averaging every reading of the same ground (step
+5); then calibrate the model totals against the Jacobs total — a measured
+factor, not a guess — and produce the final report and visuals (step 6).
 
 Pipeline at a glance:
 
@@ -30,11 +28,11 @@ Pipeline at a glance:
 |---|---|---|---|
 | 1 | `extract_frames.py` | video → cropped keyframes | `keyframes/*.jpg` |
 | 2 | `count_crowd.py` | density model per keyframe | `counts/*.csv`, `*_density.jpg/.npy` |
-| 3 | `estimate_route_total.py` | route total, strip summing (single reading per person) | `route_strips.csv`, `route_total.txt` |
-| 3b | `estimate_route_total_sliced.py` | route total, slice averaging — **recommended** | `route_slices.csv`, `route_total_sliced.txt` |
-| 3c | `stitch_route.py` | 2-D averaging + whole-flight mosaic | `route_mosaic*.jpg`, `route_total_mosaic.txt` |
-| 4 | `jacobs_estimate.py` | independent area x density cross-check | printed estimate |
-| 5 | `estimate_by_density.py` | people/m² x measured route length → measured calibration factor | `route_area.jpg`, `density_report.txt` |
+| 3 | `estimate_by_density.py` | crowd geometry + people/m², anchored on YOUR area measurement | `route_area.jpg`, `jacobs_segments.csv`, `density_report.txt` |
+| 4 | `jacobs_estimate.py` | area x density total from the strips you assessed | printed Jacobs total |
+| 5a | `estimate_route_total_sliced.py` | model route total, slice averaging (1-D) | `route_slices.csv`, `route_total_sliced.txt` |
+| 5b | `stitch_route.py` | model route total, mosaic averaging (2-D) + the whole flight stitched into one picture | `route_mosaic*.jpg`, `route_total_mosaic.txt` |
+| 6 | `report_route.py` | calibrate step 5 against step 4, re-stamp overlays with a climbing counter, final range | `report.txt`, re-stamped `*_density.jpg` |
 
 ---
 
@@ -82,8 +80,8 @@ holds several, pass the filename as the first argument.
   extraction settings.
 - If the video has hard cuts (different shots stitched together), frames are
   named `scene00_*, scene01_*, ...`. Treat each scene as a separate flight:
-  put each scene's frames in their own folder and run steps 2-3 per scene —
-  all the step-3 route math assumes one continuous pass.
+  put each scene's frames in their own folder and run steps 2-6 per scene —
+  all the route math assumes one continuous pass.
 
 ## 2. Count people per keyframe
 
@@ -106,77 +104,92 @@ Recipe guidance:
 - `counts_DM-Count_QNRF.csv` — **the per-keyframe people counts** (how many
   the model sees in that whole frame).
 - `*_density.jpg` — heatmap overlays, each stamped top-center with that
-  frame's estimated count. With `--label-clusters`, every density cluster
-  is outlined and stamped with its own people count (= the density mass
-  inside the blob, so the cluster numbers genuinely decompose the frame
-  total); clusters above ~60 people are subdivided into grid cells with
-  per-cell counts, small enough to verify by eye (`--min-cluster N` hides
-  labels below N people, default 3). The banner also shows how much of the
-  frame total the labels cover, e.g. `~978 people | 957 in 5 clusters` —
-  the gap is sub-threshold haze. **This is your quality control: look at
-  several.** Color must sit on the crowd, not on trees, streetlights,
-  parked cars, or app icons. Hand-count one or two near-field cells
-  against their printed number — if the model runs low there, the whole
-  total runs at least that much low. If the far half of the street shows
-  crowd but no color, the model is missing it — try `--upscale 2` (or 3 on
-  4K input). Note: the cluster/grid labels are for *your eyes only* — the
-  route math in step 3 works on the raw density maps, not on the squares.
-- `*_density.npy` — raw density maps (needed by step 3; written only with
-  `--save-density`, so don't drop that flag).
+  frame's estimated count (step 6 later re-stamps these with the
+  accumulated calibrated count). With `--label-clusters`, every density
+  cluster is outlined and stamped with its own people count (= the density
+  mass inside the blob, so the cluster numbers genuinely decompose the
+  frame total); clusters above ~60 people are subdivided into grid cells
+  with per-cell counts, small enough to verify by eye (`--min-cluster N`
+  hides labels below N people, default 3). **This is your quality
+  control: look at several.** Color must sit on the crowd, not on trees,
+  streetlights, parked cars, or app icons. Hand-count one or two
+  near-field cells against their printed number to sense how low the
+  model runs. If the far half of the street shows crowd but no color, the
+  model is missing it — try `--upscale 2` (or 3 on 4K input). The
+  cluster/grid labels are for *your eyes only* — the route math works on
+  the raw density maps, not on the squares.
+- `*_density.npy` — raw density maps (needed by steps 3 and 5; written
+  only with `--save-density`, so don't drop that flag).
 
 Remember: keyframes overlap heavily — **never sum this CSV across frames**.
-That's what step 3 is for.
+That's what steps 5a/5b are for.
 
 ![Output](counts/output.gif)
 
-## 3. Whole-route total (strip summing) — kept as a cross-check
+## 3. Crowd geometry & density (people/m²)
 
-Requires: one continuous pass along the street, and step 2 run with
-`--save-density`.
-
-How it counts: everyone the drone overflies exits through the bottom edge
-of the frame exactly once, so each interval's total is the density mass in
-the strip of ground that exited since the previous keyframe. Each person
-is counted **once, from a single reading**, taken right at the bottom edge
-where bodies are clipped — so this method runs systematically low (~30%
-below 3b/3c in practice) and motion-estimate errors accumulate as strip
-overlaps or gaps. Prefer 3b/3c for the headline number and use this one as
-a lower-bound sanity check.
+Anchors the pipeline in physical units. Measure ONE thing yourself on
+Google Maps/Earth ("Measure distance") or https://www.mapchecking.com —
+preferably the occupied **area in m²** — and the script calibrates the
+pixel→meter scale so its crowd outline matches your measurement:
 
 ```bash
-.venv/bin/python scripts/estimate_route_total.py keyframes/ counts/
-# add --no-autocrop for an original drone file (A)
-# (uses the video in input_video/; with several videos there, put the
-#  filename first: estimate_route_total.py YOUR_VIDEO.mov keyframes/ counts/)
+.venv/bin/python scripts/estimate_by_density.py --area-m2 15000 \
+      keyframes/ counts/
+# or, if you only measured the strip length the drone covered:
+#   --route-length-m 350      (mosaic bottom edge to top edge)
+# --segment-m 50              strip length for the per-strip breakdown
 ```
 
 **Outputs in `counts/`:**
 
-- `route_strips.csv` — per keyframe: ground advance (px), **people counted
-  in the strip that exited the frame**, and the running cumulative total.
-- `route_total.txt` — the bottom line: people who exited during the flight,
-  people still visible in the last keyframe, and **ESTIMATED TOTAL ALONG THE
-  ROUTE** (= the number you're after).
+- `route_area.jpg` — the whole flight stitched into one picture, with the
+  crowd area outlined in green. **Check this first: the outline must hug
+  the crowd**, because the area drives everything downstream.
+- `density_report.txt` — the geometry (scale, implied route length, area)
+  and the **density estimate**: if the density is roughly uniform along
+  the route (spread ≤ 30%), one single people/m² figure; if it varies, a
+  per-strip table (each strip with its length, width, area and density).
+  Reference totals at the standard density classes are listed for
+  orientation.
+- `jacobs_segments.csv` — every strip's measured geometry plus an empty
+  `assumed_density_p_m2` column. **This is the input of step 4.**
 
-Sanity checks before trusting it:
+Note on the densities: the model's absolute people/m² is a **lower
+bound** on night/compressed footage; the per-strip *variation* is the
+trustworthy part. Use your eyes for the absolute level — that's step 4.
 
-- "cumulative ground advance" should be several frame-heights for a flight
-  along a long street. If it's ~0, motion tracking failed (hovering drone,
-  or footage too dark) — fall back to picking non-overlapping keyframes by
-  hand and summing their CSV counts.
-- Advances should grow/shrink smoothly. Wild sign flips mean the drone
-  yawed/reversed; trim the keyframes to the clean forward stretch.
-- Whichever step-3 variant you run, anyone behind the take-off point,
-  beyond the last frame, or under tree canopies is **not counted**.
+## 4. Jacobs total (area x density)
 
-## 3b. Whole-route total (slice averaging) — recommended
+The standard method researchers and press use to size protests. Look at
+the footage strip by strip, decide which density class each strip
+*visibly* is, and put it in the `assumed_density_p_m2` column of
+`jacobs_segments.csv` (use 0 for genuinely empty stretches):
 
-Same inputs as step 3, different math: every keyframe is mapped onto a
-shared route axis using the ground advance, so each physical slice of
-street is observed in many keyframes. Per slice, all near-field
-observations are averaged, then the averaged profile is summed over the
-route. With three keyframes sliding over route slices A-E, where the model
-reads the same slice slightly differently each time:
+| class | people/m² | what it looks like |
+|---|---|---|
+| loose | 0.5 | people walking freely, big gaps |
+| moderate | 1.0 | steady walking crowd |
+| dense | 2.0 | slow shuffle, shoulders close |
+| packed | 4.0 | barely moving; rare outdoors |
+
+```bash
+.venv/bin/python scripts/jacobs_estimate.py counts/jacobs_segments.csv
+```
+
+It prints the per-strip people counts, the **JACOBS TOTAL**, and the
+honest x0.7..x1.3 range. For parts of the event the drone never filmed
+(side streets, the stretch behind the take-off point), edit the manual
+`SEGMENTS` list in the script and run it without arguments, then add the
+two totals.
+
+## 5. Model route totals (5a slice averaging, 5b mosaic averaging)
+
+Both methods make the model count each person exactly once despite the
+overlapping frames: the tracked ground motion places every keyframe on a
+shared route axis, so each piece of ground is observed in ~8-15 frames,
+and all its readings are **averaged**. With three keyframes sliding over
+route slices A-E:
 
 ```
 keyframe 1: [100, 180, 350]            (sees slices A, B, C)
@@ -185,149 +198,81 @@ keyframe 3:           [240, 570, 610] (sees slices C, D, E)
 total = 100 + (180+220)/2 + (350+390+240)/3 + (470+570)/2 + 610
 ```
 
-(Internally the "slices" are 1 px deep, so this happens per pixel row.)
-Compared to strip summing, each slice gets ~8-15 independent readings
-instead of one, motion-estimate noise blurs instead of double-counting,
-and nothing rests on the frame's bottom edge (where people are clipped
-and counts run low). Two deliberate choices to know about:
-
-- Only rows in the bottom `--use-frac` of each frame enter the average,
-  because the model systematically under-counts the far field — averaging
-  it in would drag the total down, not sharpen it.
-- The final stretch of route (ahead of the drone in the last keyframe) is
-  never seen up close; it falls back to its single nearest reading and is
-  reported separately in the summary.
+Only rows in the bottom `--use-frac` of each frame enter the average (the
+model under-counts the far field; averaging it in would drag the total
+down), and the final stretch ahead of the drone falls back to its single
+nearest reading. 5a does this per route slice (1-D); 5b aligns the
+overlaps per pixel in 2-D, so the drone's sideways drift no longer smears
+the average, and also outputs the stitched flight as one picture:
 
 ```bash
 .venv/bin/python scripts/estimate_route_total_sliced.py keyframes/ counts/
-# --use-frac 0.45  rows (from the bottom) entering the average; 1.0 = whole
-#                  frame, lower = trust only the nearest, sharpest rows
-# --slice-px 60    slice size in route_slices.csv (reporting only)
-# --calibrate F    multiply the total by a MEASURED factor (see step 5)
-```
-
-**Outputs in `counts/`:** `route_slices.csv` (per slice of route: mean
-observation count, averaged people, cumulative) and
-`route_total_sliced.txt` (the bottom line). The same sanity checks as in
-step 3 apply. Expect this total to land ~30-45% **above** strip summing
-(that gap is the averaging recovering people, see 3d) and within a few %
-of the mosaic total (3c).
-
-## 3c. Route mosaic — see the whole flight in one picture
-
-Stitches every keyframe into one route-long image using the tracked ground
-motion (vertical advance + lateral drift), and aligns the density maps the
-same way: wherever several frames overlap the same ground, their readings
-are **averaged per pixel**. This is the 2-D version of step 3b — same
-math, but sideways drift no longer smears the average — and unlike the
-per-frame overlays, the cluster/grid labels drawn on the mosaic decompose
-the actual route total used in the calculation.
-
-```bash
 .venv/bin/python scripts/stitch_route.py keyframes/ counts/
-# --label-clusters  draw per-cluster/cell QC counts (default: banner only)
-# --calibrate F     multiply the total by a MEASURED factor (see step 5)
+# --use-frac 0.45   rows (from the bottom) entering the average
+# --calibrate F     apply a measured calibration factor (step 6 does this
+#                   for you; only use directly if you skip step 6)
+# stitch_route.py also takes --label-clusters for a QC mosaic with
+# per-cluster/cell counts
 ```
 
-**Outputs in `counts/`:** `route_mosaic.jpg` (the stitched flight — also
-handy for measuring the route for steps 4/5), `route_mosaic_density.jpg`
-(averaged density over the whole route, stamped with the route total),
-and `route_total_mosaic.txt`. Expect the total to land within a few % of
-step 3b; large disagreement means the motion tracking failed — look at
-the mosaic, misalignment is obvious to the eye.
+**Outputs in `counts/`:** `route_total_sliced.txt` + `route_slices.csv`
+(5a), `route_total_mosaic.txt` + `route_mosaic.jpg` +
+`route_mosaic_density.jpg` (5b).
 
-You can also feed the stitched picture back through the model in one pass
-(`count_crowd.py counts/route_mosaic.jpg --out counts_mosaic ...`) as a
-cross-check, but treat it as a floor: each spot then gets a single reading
-instead of ~8 averaged ones, and seams/scale variation make the model run
-low on giant stitched images.
+Sanity checks:
 
-## 3d. Which number do I quote?
+- The two totals should agree within a few %. If not, the motion track is
+  suspect — open `route_mosaic.jpg`, misalignment is obvious to the eye.
+- "cumulative ground advance" should be several frame-heights for a
+  flight along a long street. If it's ~0, motion tracking failed
+  (hovering drone, footage too dark) — fall back to picking
+  non-overlapping keyframes by hand and summing their step-2 CSV counts.
+- Advances should grow/shrink smoothly; wild sign flips mean the drone
+  yawed/reversed — trim the keyframes to the clean forward stretch.
+- Whichever method you use, anyone behind the take-off point, beyond the
+  last frame, or under tree canopies is **not counted**.
+- (Legacy: `estimate_route_total.py`, strip summing, still exists. It
+  counts each person from a single reading at the clipped bottom edge and
+  runs ~30% low — only useful as a lower-bound cross-check.)
 
-All step-3 variants read the same density maps and the same motion track —
-they differ only in how many readings each person gets. Real example
-(`dita_10.mp4`, night reel, 45 keyframes):
+## 6. Report (calibrated totals + climbing counter)
 
-| method | readings per person | total |
-|---|---|---|
-| 3 — strip summing | 1 (at the clipped bottom edge) | 2,530 |
-| model on the stitched mosaic, one pass | 1 | 2,457 |
-| 3b — slice averaging (1-D) | ~8 | 3,631 |
-| 3c — mosaic averaging (2-D) | ~8 | **3,657** |
+The model totals (step 5) are precise about *relative* structure but low
+in absolute level; the Jacobs total (step 4) is anchored in physical
+reality. Step 6 bridges them with a **measured** calibration factor
 
-The pattern to expect: the two single-reading methods agree with each
-other, the two averaging methods agree with each other (within a few %),
-and the averaging pair lands noticeably higher because single readings
-miss people that other views of the same spot catch. **Quote the averaging
-result (3b/3c) as the method's answer** — still a floor on bad footage,
-since averaging fixes noise but not the model's systematic under-counting
-on night/compressed video. If 3b and 3c disagree by much more than a few
-%, the motion track is suspect: open `route_mosaic.jpg`, misalignment is
-obvious to the eye.
+    F = Jacobs total / mean(5a, 5b)
 
-If the floor is clearly far below what the footage shows (dense crowd,
-tiny number), do NOT invent a multiplier — measure one with step 5 (or
-hand counts) and pass it to `--calibrate`.
-
-## 4. Cross-check with area x density (Jacobs method)
-
-Never publish a model number alone. Measure the occupied street on Google
-Maps/Earth ("Measure distance") or https://www.mapchecking.com, split it
-into segments by how packed each looks in your footage, edit `SEGMENTS` in
-the script, then:
+— this is the honest version of "the model runs ~2-4x low": derived from
+your area measurement and your density assessment, not invented.
 
 ```bash
-.venv/bin/python scripts/jacobs_estimate.py
+.venv/bin/python scripts/report_route.py --jacobs-total 7500 keyframes/ counts/
+# or apply a factor you already know directly:  --calibrate 2.06
 ```
 
-Density classes: 0.5/m² loose, 1/m² steady walking crowd, 2/m² slow shuffle,
-4/m² packed-tight (rare outdoors). If the model total and the Jacobs total
-disagree by more than ~2x, find out why before quoting either (usual
-culprits: model missing the far field — check overlays; or your width/length
-measurement including empty sidewalk).
+**What it does:**
 
-## 5. Method 5 — people/m² x measured route length
+- writes `counts/report.txt`: both model totals, the Jacobs total, F, the
+  calibrated totals, and the **final estimate with the honest range to
+  quote**;
+- re-stamps every `counts/scene*_density.jpg` so the banner shows the
+  **accumulated calibrated count up to that frame** — frame 1 shows
+  everyone visible at the start, each next frame adds only the newly
+  revealed ground, the last frame shows the final number. Rebuild the gif
+  (Extras) and you get a counter that climbs as the drone flies.
 
-The crowd model under-counts on bad footage, but its *map* of where the
-crowd is stays good. Method 5 works in physical units instead of trusting
-the model's absolute numbers: measure the real length of the strip the
-drone covered (Google Maps/Earth "Measure distance", or directly on
-`route_mosaic.jpg` against a known landmark distance), then:
+Reporting guidance: quote the **range, not a number**. For multiple
+videos/passes of the same event, run the pipeline per pass and report the
+median and spread; note the time of each pass — crowds turn over during
+an event.
 
-```bash
-.venv/bin/python scripts/estimate_by_density.py --route-length-m 540 \
-      keyframes/ counts/
-```
-
-The length must be the ground covered by the mosaic **bottom edge to top
-edge**, not the whole street if the drone covered less. Reference totals
-scale with the *square* of this length — measure it carefully.
-
-**Outputs in `counts/`:**
-
-- `route_area.jpg` — the mosaic with the measured crowd area outlined in
-  green. **Check this first: the area drives everything.**
-- `density_report.txt` — crowd area in m², the model's implied people/m²,
-  reference totals at the standard density classes (0.5 loose / 1 walking
-  / 2 slow shuffle / 4 packed), and the calibration factor the model
-  would need to reach each class.
-- `density_slices.csv` — width, area, model people and people/m² per
-  stretch of route, so you can assign a density class per segment
-  instead of one for the whole route.
-
-How to turn this into a defensible number: look at the footage segment by
-segment and decide which density class each stretch *visibly* is. The
-matching reference total is your Jacobs estimate built on the model's own
-crowd outline; the "model would need xF" line of your chosen class is a
-**measured** `--calibrate` factor for steps 3b/3c — quote both and they
-should now agree.
-
-## 6. Reporting
-
-Quote a **range, not a number** (e.g. Jacobs x0.7 .. x1.3, with the
-averaged route total from 3b/3c as the floor). For multiple videos/passes
-of the same event, run the pipeline per pass and report the median and
-spread. Note the time of each pass — crowds turn over during an event.
+Worked example (this repo's `dita_10.mp4`, night reel, 45 keyframes,
+area measured at 15,000 m²): model totals 3,631 (5a) / 3,657 (5b); Jacobs
+at a conservative 0.5 p/m² everywhere = 7,500 → F = x2.06 → final
+estimate ~7,500, quoted range ~5,200..9,800. A denser (and visually
+defensible) 1.0 p/m² would double the Jacobs side — which is exactly why
+the density class assessment, not the model, deserves your attention.
 
 ---
 
@@ -372,8 +317,8 @@ spread. Note the time of each pass — crowds turn over during an event.
 ### Converting output images to .gif
 
 Run this **from inside `counts/`** (the gif is written to the folder you
-are standing in), and re-run it after every `count_crowd.py` run — it does
-not update itself:
+are standing in), and re-run it after every `count_crowd.py` or
+`report_route.py` run — it does not update itself:
 
 ```bash
 brew install imagemagick
@@ -392,4 +337,3 @@ ffmpeg -i output.gif \
 -pix_fmt yuv420p \
 density_video.mp4
 ```
-
