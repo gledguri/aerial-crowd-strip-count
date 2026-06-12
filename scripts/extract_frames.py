@@ -10,14 +10,44 @@ What it does:
   2. Detects scene cuts (hard transitions between different drone shots).
   3. Saves evenly spaced keyframes per scene, cropped to the video band.
 
+The video to analyze is expected in the input_video/ folder. If you run the
+script without a video argument and input_video/ holds exactly one video,
+that one is used automatically.
+
 Usage:
-  python extract_frames.py VIDEO [--out DIR] [--fps 2] [--no-autocrop]
+  python extract_frames.py [VIDEO] [--out DIR] [--fps 2] [--no-autocrop]
 """
 import argparse
 import os
 
 import cv2
 import numpy as np
+
+INPUT_DIR = "input_video"
+VIDEO_EXTS = (".mov", ".mp4", ".m4v", ".avi", ".mkv", ".webm")
+
+
+def resolve_video(arg):
+    """Find the input video: explicit path, name inside input_video/, or the
+    single video sitting in input_video/."""
+    if arg:
+        if os.path.isfile(arg):
+            return arg
+        cand = os.path.join(INPUT_DIR, arg)
+        if os.path.isfile(cand):
+            return cand
+        raise SystemExit(f"video not found: {arg} (also tried {cand})")
+    vids = []
+    if os.path.isdir(INPUT_DIR):
+        vids = [os.path.join(INPUT_DIR, f) for f in sorted(os.listdir(INPUT_DIR))
+                if f.lower().endswith(VIDEO_EXTS)]
+    if len(vids) == 1:
+        return vids[0]
+    if not vids:
+        raise SystemExit(f"no video argument given and no video found in "
+                         f"{INPUT_DIR}/ — put your video there")
+    raise SystemExit(f"{INPUT_DIR}/ holds several videos, name one:\n  "
+                     + "\n  ".join(vids))
 
 
 def detect_video_band(cap, n_samples=24):
@@ -81,13 +111,16 @@ def detect_cuts(cap, band, thresh=0.5):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("video")
+    ap.add_argument("video", nargs="?", default=None,
+                    help="video file (default: the one video in input_video/)")
     ap.add_argument("--out", default="keyframes")
     ap.add_argument("--fps", type=float, default=2.0,
                     help="keyframes per second of video to save")
     ap.add_argument("--no-autocrop", action="store_true",
                     help="use full frame (original drone footage)")
     args = ap.parse_args()
+    args.video = resolve_video(args.video)
+    print(f"input video: {args.video}")
 
     cap = cv2.VideoCapture(args.video)
     vid_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0

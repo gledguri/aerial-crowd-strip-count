@@ -34,12 +34,19 @@ first run — the "patched lwcc weights path" message is normal.
 
 ## 1. Extract keyframes
 
+Put the video you want to analyze in the **`input_video/`** folder. If that
+folder holds exactly one video, the scripts find it on their own; if it
+holds several, pass the filename as the first argument.
+
 ```bash
 # B. screen-recorded reel (default: auto-crops phone/app UI, detects cuts):
-.venv/bin/python scripts/extract_frames.py YOUR_VIDEO.mov --out keyframes --fps 1.5
+.venv/bin/python scripts/extract_frames.py --out keyframes --fps 1.5
 
 # A. original drone file (no UI to crop):
-.venv/bin/python scripts/extract_frames.py YOUR_VIDEO.mp4 --out keyframes --fps 1.5 --no-autocrop
+.venv/bin/python scripts/extract_frames.py --out keyframes --fps 1.5 --no-autocrop
+
+# several videos in input_video/ — name the one you mean:
+.venv/bin/python scripts/extract_frames.py YOUR_VIDEO.mov --out keyframes --fps 1.5
 ```
 
 - It prints the detected video band `(x, y, w, h)` and the scene list.
@@ -71,8 +78,9 @@ Recipe guidance:
 
 - `counts_DM-Count_QNRF.csv` — **the per-keyframe people counts** (how many
   the model sees in that whole frame).
-- `*_density.jpg` — heatmap overlays. **This is your quality control: look
-  at several.** Color must sit on the crowd, not on trees, streetlights,
+- `*_density.jpg` — heatmap overlays, each stamped top-center with that
+  frame's estimated count. **This is your quality control: look at
+  several.** Color must sit on the crowd, not on trees, streetlights,
   parked cars, or app icons. If the far half of the street shows crowd but
   no color, the model is missing it — try `--upscale 2` (or 3 on 4K input).
 - `*_density.npy` — raw density maps (needed by step 3).
@@ -88,8 +96,10 @@ Requires: one continuous pass along the street, and step 2 run with
 `--save-density`.
 
 ```bash
-.venv/bin/python scripts/estimate_route_total.py YOUR_VIDEO.mov keyframes/ counts/
+.venv/bin/python scripts/estimate_route_total.py keyframes/ counts/
 # add --no-autocrop for an original drone file (A)
+# (uses the video in input_video/; with several videos there, put the
+#  filename first: estimate_route_total.py YOUR_VIDEO.mov keyframes/ counts/)
 ```
 
 **Outputs in `counts/`:**
@@ -166,6 +176,20 @@ pass — crowds turn over during an event.
 
 ## Extras
 ### Converting output images to .gif
+```bash
 brew install imagemagick
 cd /path/to/images
 magick *.jpg -delay 10 -loop 0 output.gif
+```
+
+Converting output to video
+```bash
+brew install ffmpeg
+cd counts/
+
+ffmpeg -i output.gif \
+-vf "scale=1206:718" \
+-pix_fmt yuv420p \
+density_video.mp4
+```
+

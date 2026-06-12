@@ -18,9 +18,10 @@ position. The ground advance is measured on the RAW consecutive video frames
 with Lucas-Kanade feature tracking, then accumulated between keyframes.
 
 Usage:
-  python estimate_route_total.py VIDEO keyframes/ counts_dir/
+  python estimate_route_total.py [VIDEO] keyframes/ counts_dir/
         [--no-autocrop] [--window 0.45]
 counts_dir must contain *_density.npy from count_crowd.py --save-density.
+If VIDEO is omitted, the single video in input_video/ is used.
 
 Outputs (written into counts_dir):
   route_strips.csv  - per-keyframe ground advance + people counted in each
@@ -38,7 +39,7 @@ import cv2
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from extract_frames import detect_video_band  # noqa: E402
+from extract_frames import detect_video_band, resolve_video  # noqa: E402
 
 
 def per_frame_motion(video, band, window_frac, scale=0.5):
@@ -80,7 +81,8 @@ def per_frame_motion(video, band, window_frac, scale=0.5):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("video")
+    ap.add_argument("video", nargs="?", default=None,
+                    help="video file (default: the one video in input_video/)")
     ap.add_argument("keyframes")
     ap.add_argument("counts", help="dir with *_density.npy from count_crowd.py")
     ap.add_argument("--window", type=float, default=0.45,
@@ -88,6 +90,8 @@ def main():
                          "motion tracking")
     ap.add_argument("--no-autocrop", action="store_true")
     args = ap.parse_args()
+    args.video = resolve_video(args.video)
+    print(f"input video: {args.video}")
 
     frames = sorted(glob.glob(os.path.join(args.keyframes, "*.jpg")))
     if len(frames) < 2:

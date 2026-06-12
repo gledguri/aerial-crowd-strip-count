@@ -49,7 +49,7 @@ def _fix_lwcc_weights_path():
         importlib.reload(f)
 
 
-def save_overlay(img_path, density, out_path):
+def save_overlay(img_path, density, out_path, count=None):
     import cv2
     import numpy as np
 
@@ -60,6 +60,17 @@ def save_overlay(img_path, density, out_path):
         d = d / d.max()
     heat = cv2.applyColorMap((d * 255).astype("uint8"), cv2.COLORMAP_JET)
     overlay = cv2.addWeighted(img, 0.55, heat, 0.45, 0)
+    if count is not None:
+        h, w = overlay.shape[:2]
+        label = f"~{count:,.0f} people"
+        font, scale = cv2.FONT_HERSHEY_SIMPLEX, w / 900.0
+        thick = max(2, int(round(scale * 2)))
+        (tw, th), _ = cv2.getTextSize(label, font, scale, thick)
+        org = ((w - tw) // 2, th + max(12, h // 40))
+        cv2.putText(overlay, label, org, font, scale, (0, 0, 0),
+                    thick + 4, cv2.LINE_AA)
+        cv2.putText(overlay, label, org, font, scale, (255, 255, 255),
+                    thick, cv2.LINE_AA)
     cv2.imwrite(out_path, overlay, [cv2.IMWRITE_JPEG_QUALITY, 90])
 
 
@@ -119,7 +130,8 @@ def main():
             resize_img=not args.no_resize)
         name = os.path.basename(p)
         stem = re.sub(r"\.(jpg|png)$", "", name)
-        save_overlay(p, density, os.path.join(args.out, stem + "_density.jpg"))
+        save_overlay(p, density, os.path.join(args.out, stem + "_density.jpg"),
+                     count=float(count))
         if args.save_density:
             import cv2
             import numpy as np
