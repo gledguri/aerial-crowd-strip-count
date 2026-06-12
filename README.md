@@ -27,8 +27,7 @@ Pipeline at a glance:
 | step | script | what it does | key outputs |
 |---|---|---|---|
 | 1 | `extract_frames.py` | video → cropped keyframes | `keyframes/*.jpg` |
-| 2 | `count_crowd.py` | density model per keyframe | `counts/*.csv`, `*_density.jpg/.npy` |
-| 3 | `estimate_by_density.py` | crowd geometry + people/m², anchored on YOUR area measurement | `route_area.jpg`, `jacobs_segments.csv`, `density_report.txt` |
+| 3 | `estimate_by_density.py` | crowd geometry + people/m², anchored on YOUR area measurement (estimates density maps automatically) | `route_area.jpg`, `jacobs_segments.csv`, `density_report.txt` |
 | 4 | `jacobs_estimate.py` | area x density total from the strips you assessed | printed Jacobs total |
 | 5a | `estimate_route_total_sliced.py` | model route total, slice averaging (1-D) | `route_slices.csv`, `route_total_sliced.txt` |
 | 5b | `stitch_route.py` | model route total, mosaic averaging (2-D) + the whole flight stitched into one picture | `route_mosaic*.jpg`, `route_total_mosaic.txt` |
@@ -43,9 +42,10 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-Model weights (~86 MB) download automatically to `~/.lwcc/weights/` on first
-run. `count_crowd.py` auto-patches a known path bug in the `lwcc` package on
-first run — the "patched lwcc weights path" message is normal.
+Model weights (~86 MB) download automatically to `~/.lwcc/weights/` the
+first time the density model runs (inside step 3). A known path bug in
+the `lwcc` package is auto-patched on that first run — the "patched lwcc
+weights path" message is normal.
 
 ## 1. Extract keyframes
 
@@ -80,58 +80,24 @@ holds several, pass the filename as the first argument.
   extraction settings.
 - If the video has hard cuts (different shots stitched together), frames are
   named `scene00_*, scene01_*, ...`. Treat each scene as a separate flight:
-  put each scene's frames in their own folder and run steps 2-6 per scene —
+  put each scene's frames in their own folder and run steps 3-6 per scene —
   all the route math assumes one continuous pass.
 
-## 2. Count people per keyframe
-
-```bash
-.venv/bin/python scripts/count_crowd.py keyframes/ --out counts \
-      --weights QNRF --upscale 2 --save-density
-# add --label-clusters for QC overlays with per-cluster/cell counts
-```
-
-Recipe guidance:
-
-| footage | recommended flags |
-|---|---|
-| low-res / night / reel (B) | `--weights QNRF --upscale 2` |
-| 4K original, dense crowd (A) | `--weights QNRF --no-resize` (try `--upscale 2` too, keep the higher one if its overlay looks cleaner) |
-| sparse crowd, people clearly separated | `--weights SHA`, or `SHB` |
-
-**Outputs in `counts/`:**
-
-- `counts_DM-Count_QNRF.csv` — **the per-keyframe people counts** (how many
-  the model sees in that whole frame).
-- `*_density.jpg` — heatmap overlays, each stamped top-center with that
-  frame's estimated count (step 6 later re-stamps these with the
-  accumulated calibrated count). With `--label-clusters`, every density
-  cluster is outlined and stamped with its own people count (= the density
-  mass inside the blob, so the cluster numbers genuinely decompose the
-  frame total); clusters above ~60 people are subdivided into grid cells
-  with per-cell counts, small enough to verify by eye (`--min-cluster N`
-  hides labels below N people, default 3). **This is your quality
-  control: look at several.** Color must sit on the crowd, not on trees,
-  streetlights, parked cars, or app icons. Hand-count one or two
-  near-field cells against their printed number to sense how low the
-  model runs. If the far half of the street shows crowd but no color, the
-  model is missing it — try `--upscale 2` (or 3 on 4K input). The
-  cluster/grid labels are for *your eyes only* — the route math works on
-  the raw density maps, not on the squares.
-- `*_density.npy` — raw density maps (needed by steps 3 and 5; written
-  only with `--save-density`, so don't drop that flag).
-
-Remember: keyframes overlap heavily — **never sum this CSV across frames**.
-That's what steps 5a/5b are for.
-
-![Output](counts/output.gif)
+*(There is no step 2 — the density model runs automatically inside
+step 3. `count_crowd.py` still exists as the internal model engine; run
+it standalone only for QC experiments, e.g. `--label-clusters` overlays
+with per-cluster people counts.)*
 
 ## 3. Crowd geometry & density (people/m²)
 
-Anchors the pipeline in physical units. Measure ONE thing yourself on
-Google Maps/Earth ("Measure distance") or https://www.mapchecking.com —
-preferably the occupied **area in m²** — and the script calibrates the
-pixel→meter scale so its crowd outline matches your measurement:
+Anchors the pipeline in physical units. The script estimates a **density
+map** for every keyframe (people per area, predicted directly by the
+model — a few seconds per frame on CPU the first time, cached in
+`counts/` afterwards), stitches the maps onto the route, and converts to
+real units with ONE measurement you make yourself on Google Maps/Earth
+("Measure distance") or https://www.mapchecking.com — preferably the
+occupied **area in m²**. The pixel→meter scale is calibrated so the crowd
+outline matches your measurement:
 
 ```bash
 .venv/bin/python scripts/estimate_by_density.py --area-m2 15000 \
@@ -140,6 +106,15 @@ pixel→meter scale so its crowd outline matches your measurement:
 #   --route-length-m 350      (mosaic bottom edge to top edge)
 # --segment-m 50              strip length for the per-strip breakdown
 ```
+
+Model flags (only matter the first time, when the density maps are
+computed):
+
+| footage | recommended flags |
+|---|---|
+| low-res / night / reel (B) | default (= `--weights QNRF --upscale 2`) |
+| 4K original, dense crowd (A) | `--weights QNRF --upscale 1` (try 2 as well; keep whichever heatmap looks cleaner) |
+| sparse crowd, people clearly separated | `--weights SHA` or `SHB` |
 
 **Outputs in `counts/`:**
 
@@ -154,6 +129,10 @@ pixel→meter scale so its crowd outline matches your measurement:
   orientation.
 - `jacobs_segments.csv` — every strip's measured geometry plus an empty
   `assumed_density_p_m2` column. **This is the input of step 4.**
+- `*_density.npy` + `*_density.jpg` — the per-keyframe density maps and
+  their heatmap overlays (no numbers on them; step 6 stamps the
+  calibrated climbing counter). The heatmaps are your QC: color must sit
+  on the crowd, not on trees, streetlights or parked cars.
 
 Note on the densities: the model's absolute people/m² is a **lower
 bound** on night/compressed footage; the per-strip *variation* is the
@@ -226,7 +205,8 @@ Sanity checks:
 - "cumulative ground advance" should be several frame-heights for a
   flight along a long street. If it's ~0, motion tracking failed
   (hovering drone, footage too dark) — fall back to picking
-  non-overlapping keyframes by hand and summing their step-2 CSV counts.
+  non-overlapping keyframes by hand and summing their model counts
+  (run `count_crowd.py` standalone to get a per-frame CSV).
 - Advances should grow/shrink smoothly; wild sign flips mean the drone
   yawed/reversed — trim the keyframes to the clean forward stretch.
 - Whichever method you use, anyone behind the take-off point, beyond the
@@ -274,6 +254,8 @@ estimate ~7,500, quoted range ~5,200..9,800. A denser (and visually
 defensible) 1.0 p/m² would double the Jacobs side — which is exactly why
 the density class assessment, not the model, deserves your attention.
 
+![Output](output/side_by_side.gif)
+
 ---
 
 ## Filming checklist (for whoever flies the drone)
@@ -293,8 +275,8 @@ the density class assessment, not the model, deserves your attention.
 
 ## Troubleshooting
 
-- `lwcc` errors about `/.lwcc/weights` on a fresh machine: run
-  `count_crowd.py` once; it patches the package in place.
+- `lwcc` errors about `/.lwcc/weights` on a fresh machine: run step 3
+  once; its first model run patches the package in place.
 - Keyframes contain app UI: re-run step 1 and check the printed band; you
   can also crop manually with ffmpeg and use `--no-autocrop`.
 - Keyframes look blurry / low quality: it's the source video, not the
@@ -302,9 +284,10 @@ the density class assessment, not the model, deserves your attention.
   (e.g. `ffprobe` or just QuickTime's inspector) and run the pipeline on
   the largest/highest-resolution version of the SAME flight; `--png`
   (step 1) removes the last bit of re-compression but cannot add detail.
-- Counts look absurdly low and overlays light up only the nearest rows of
-  people: increase `--upscale`; if overlays light up trees/lights instead,
-  decrease it.
+- Heatmaps light up only the nearest rows of people: increase `--upscale`
+  (step 3); if they light up trees/lights instead, decrease it. The
+  density maps are cached — **delete `counts/*_density.npy` first**, or
+  changed model flags will silently have no effect.
 - "I re-ran it and nothing got produced": if the inputs didn't change, a
   re-run reproduces byte-identical outputs — check the file timestamps in
   `counts/`. Also note the gif is NOT one of the script outputs: it only
@@ -317,8 +300,8 @@ the density class assessment, not the model, deserves your attention.
 ### Converting output images to .gif
 
 Run this **from inside `counts/`** (the gif is written to the folder you
-are standing in), and re-run it after every `count_crowd.py` or
-`report_route.py` run — it does not update itself:
+are standing in), and re-run it after every step-3 or step-6 run — it
+does not update itself:
 
 ```bash
 brew install imagemagick

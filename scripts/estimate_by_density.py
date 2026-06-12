@@ -25,8 +25,10 @@ VARIATION as trustworthy.
 
 Usage:
   python estimate_by_density.py --area-m2 15000 [VIDEO] keyframes/ counts/
-        [--segment-m 50] [--use-frac 0.45] [--window 0.45] [--no-autocrop]
-counts_dir must contain *_density.npy from count_crowd.py --save-density.
+        [--segment-m 50] [--weights QNRF] [--upscale 2]
+        [--use-frac 0.45] [--window 0.45] [--no-autocrop]
+The density model runs automatically on any keyframe that has no
+*_density.npy in counts_dir yet (a few seconds per frame, once per video).
 
 Outputs (written into counts_dir):
   route_area.jpg       - mosaic with the crowd area outlined (CHECK THIS:
@@ -46,7 +48,22 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from extract_frames import resolve_video  # noqa: E402
 from stitch_route import build_route_mosaic  # noqa: E402
-from count_crowd import crowd_mask  # noqa: E402
+from count_crowd import crowd_mask, generate_density_maps  # noqa: E402
+
+
+def ensure_density_maps(keyframes, counts, weights, upscale):
+    """Run the density model on any keyframe that has no *_density.npy yet
+    (a few seconds per frame on CPU, once per video)."""
+    import glob as g
+    frames = sorted(g.glob(os.path.join(keyframes, "*.jpg")) +
+                    g.glob(os.path.join(keyframes, "*.png")))
+    missing = [p for p in frames if not os.path.exists(os.path.join(
+        counts, os.path.splitext(os.path.basename(p))[0] + "_density.npy"))]
+    if missing:
+        print(f"estimating density maps for {len(missing)} keyframe(s) "
+              f"(model: DM-Count {weights}, upscale x{upscale}) ...")
+        generate_density_maps(missing, counts, weights=weights,
+                              upscale=upscale)
 
 CLASSES = [(0.5, "loose crowd"), (1.0, "steady walking crowd"),
            (2.0, "slow shuffle"), (4.0, "packed tight (rare outdoors)")]
@@ -66,6 +83,13 @@ def main():
                          "used only without --area-m2")
     ap.add_argument("--segment-m", type=float, default=50.0,
                     help="strip length (m) for the per-strip breakdown")
+    ap.add_argument("--weights", default="QNRF",
+                    choices=["SHA", "SHB", "QNRF"],
+                    help="model weights when density maps must be computed")
+    ap.add_argument("--upscale", type=int, default=2,
+                    help="model upscale factor when density maps must be "
+                         "computed (2 recovers small people in low-res "
+                         "footage)")
     ap.add_argument("--use-frac", type=float, default=0.45)
     ap.add_argument("--window", type=float, default=0.45)
     ap.add_argument("--no-autocrop", action="store_true")
@@ -75,6 +99,8 @@ def main():
     args.video = resolve_video(args.video)
     print(f"input video: {args.video}")
 
+    ensure_density_maps(args.keyframes, args.counts, args.weights,
+                        args.upscale)
     mosaic, seen, avg, cnt_near, meta = build_route_mosaic(
         args.video, args.keyframes, args.counts, args.use_frac,
         args.window, args.no_autocrop)
@@ -90,7 +116,6 @@ def main():
         area_m2, anchor = mask_px * s * s, "YOUR route length"
     route_len_m = CH * s
     masked_total = float(avg[mask].sum())
-    model_total = float(avg.sum())
     mean_density = masked_total / area_m2 if area_m2 > 0 else 0.0
 
     # per-strip breakdown along the route (canvas bottom = route start)
@@ -162,8 +187,6 @@ def main():
         f"scale / implied route length           : {s * 100:.1f} cm/px / "
         f"{route_len_m:.0f} m\n"
         f"crowd area (inside green outline)      : {area_m2:,.0f} m2\n"
-        f"model people inside area / route total : {masked_total:,.0f} / "
-        f"{model_total:,.0f}\n"
         f"\nDENSITY ESTIMATE (model-implied; absolute level is a LOWER "
         f"bound on bad footage,\nthe per-strip variation is the "
         f"trustworthy part):\n{verdict}"

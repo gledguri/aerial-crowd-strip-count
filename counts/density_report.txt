@@ -2,7 +2,6 @@ video                                  : input_video/dita_10.mp4
 scale anchored on                      : YOUR area measurement
 scale / implied route length           : 17.1 cm/px / 349 m
 crowd area (inside green outline)      : 15,000 m2
-model people inside area / route total : 3,497 / 3,657
 
 DENSITY ESTIMATE (model-implied; absolute level is a LOWER bound on bad footage,
 the per-strip variation is the trustworthy part):

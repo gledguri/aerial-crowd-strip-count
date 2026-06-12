@@ -1,25 +1,24 @@
 #!/usr/bin/env python3
 """
-Step 2 of the crowd-counting pipeline: estimate people per keyframe with a
-pretrained crowd-density model (via the `lwcc` package).
+Internal model engine of the pipeline — not a pipeline step.
 
-For dense crowds seen from the air, density-map models (DM-Count, CSRNet,
-SFANet trained on ShanghaiTech/UCF-QNRF) are far more reliable than person
+Runs a pretrained crowd-density model (DM-Count via the `lwcc` package)
+on images and saves, per image, a mass-preserving density map
+(*_density.npy) plus a heatmap overlay (*_density.jpg). For dense crowds
+seen from the air, density-map models are far more reliable than person
 detectors, which fail once people are only a few pixels tall.
 
-Outputs, per image:
-  - predicted count
-  - a density-heatmap overlay JPG (so you can verify the model is firing on
-    the crowd and not on trees/lights)
-  - one CSV with all counts
+estimate_by_density.py (step 3) calls generate_density_maps() automatically
+whenever density maps are missing, so you normally never run this file.
 
-Usage:
+Standalone use (QC / experiments):
   python count_crowd.py keyframes/ [--out counts] [--model DM-Count]
-                        [--weights SHA] [--no-resize]
+        [--weights QNRF] [--upscale 2] [--no-resize]
+        [--label-clusters] [--min-cluster 3]
 
-Weights: SHA  = ShanghaiTech A (dense crowds)      <- default
+Weights: SHA  = ShanghaiTech A (dense crowds)
          SHB  = ShanghaiTech B (sparser crowds)
-         QNRF = UCF-QNRF (very large dense crowds; good cross-check)
+         QNRF = UCF-QNRF (very large dense crowds)   <- pipeline default
 """
 import argparse
 import csv
@@ -160,17 +159,74 @@ def save_overlay(img_path, density, out_path, count=None, clusters=False,
     cv2.imwrite(out_path, overlay, [cv2.IMWRITE_JPEG_QUALITY, 90])
 
 
+def generate_density_maps(paths, out_dir, model_name="DM-Count",
+                          weights="QNRF", upscale=2, no_resize=None,
+                          overlay_counts=False, label_clusters_qc=False,
+                          min_cluster=3.0):
+    """Run the density model on every image in `paths`; write per image a
+    mass-preserving *_density.npy (at original image size) and a heatmap
+    *_density.jpg into out_dir. The overlay carries no numbers unless
+    overlay_counts/label_clusters_qc — step 6 stamps the real (calibrated)
+    ones. Returns [(image_name, model_count), ...]."""
+    import cv2
+    import numpy as np
+
+    if no_resize is None:
+        no_resize = upscale > 1
+    _fix_lwcc_weights_path()
+    from lwcc import LWCC
+
+    os.makedirs(out_dir, exist_ok=True)
+    model = LWCC.load_model(model_name=model_name, model_weights=weights)
+
+    tmpdir = None
+    if upscale > 1:
+        import tempfile
+        tmpdir = tempfile.mkdtemp(prefix="upscaled_")
+
+    rows = []
+    for p in paths:
+        infer_path = p
+        if tmpdir:
+            img = cv2.imread(p)
+            img = cv2.resize(img, None, fx=upscale, fy=upscale,
+                             interpolation=cv2.INTER_CUBIC)
+            stem_up = os.path.splitext(os.path.basename(p))[0]
+            infer_path = os.path.join(tmpdir, stem_up + ".png")  # lossless
+            cv2.imwrite(infer_path, img)
+        count, density = LWCC.get_count(
+            infer_path, model=model, return_density=True,
+            resize_img=not no_resize)
+        name = os.path.basename(p)
+        stem = re.sub(r"\.(jpg|png)$", "", name)
+        save_overlay(p, density, os.path.join(out_dir, stem + "_density.jpg"),
+                     count=float(count) if overlay_counts else None,
+                     clusters=label_clusters_qc, min_cluster=min_cluster)
+        orig = cv2.imread(p)
+        h, w = orig.shape[:2]
+        d = density.astype("float32")
+        mass = d.sum()
+        d = cv2.resize(d, (w, h), interpolation=cv2.INTER_LINEAR)
+        if d.sum() > 0:
+            d *= mass / d.sum()  # keep total density mass unchanged
+        np.save(os.path.join(out_dir, stem + "_density.npy"), d)
+        rows.append((name, round(float(count))))
+        print(f"{name:35s} {count:9.0f}")
+    return rows
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("images", help="image file, directory, or glob")
     ap.add_argument("--out", default="counts")
     ap.add_argument("--model", default="DM-Count",
                     choices=["DM-Count", "CSRNet", "SFANet", "Bay"])
-    ap.add_argument("--weights", default="SHA", choices=["SHA", "SHB", "QNRF"])
+    ap.add_argument("--weights", default="QNRF",
+                    choices=["SHA", "SHB", "QNRF"])
     ap.add_argument("--no-resize", action="store_true",
                     help="skip downscaling to 1000px (use for very dense, "
                          "high-res originals)")
-    ap.add_argument("--upscale", type=int, default=1,
+    ap.add_argument("--upscale", type=int, default=2,
                     help="upscale factor before inference; 2 helps recover "
                          "small far-away people in low-res footage "
                          "(implies --no-resize)")
@@ -179,13 +235,7 @@ def main():
                          "stamp it with its people count, for visual QC")
     ap.add_argument("--min-cluster", type=float, default=3.0,
                     help="only label clusters of at least this many people")
-    ap.add_argument("--save-density", action="store_true",
-                    help="save per-frame density maps as .npy (rescaled to "
-                         "original frame size, mass-preserving) for "
-                         "downstream route-total estimation")
     args = ap.parse_args()
-    if args.upscale > 1:
-        args.no_resize = True
 
     if os.path.isdir(args.images):
         paths = sorted(glob.glob(os.path.join(args.images, "*.jpg")) +
@@ -195,49 +245,10 @@ def main():
     if not paths:
         raise SystemExit(f"no images found at {args.images}")
 
-    _fix_lwcc_weights_path()
-    from lwcc import LWCC
-
-    os.makedirs(args.out, exist_ok=True)
-    model = LWCC.load_model(model_name=args.model, model_weights=args.weights)
-
-    rows = []
-    tmpdir = None
-    if args.upscale > 1:
-        import tempfile
-        import cv2
-        tmpdir = tempfile.mkdtemp(prefix="upscaled_")
-
-    for p in paths:
-        infer_path = p
-        if tmpdir:
-            img = cv2.imread(p)
-            img = cv2.resize(img, None, fx=args.upscale, fy=args.upscale,
-                             interpolation=cv2.INTER_CUBIC)
-            stem_up = os.path.splitext(os.path.basename(p))[0]
-            infer_path = os.path.join(tmpdir, stem_up + ".png")  # lossless
-            cv2.imwrite(infer_path, img)
-        count, density = LWCC.get_count(
-            infer_path, model=model, return_density=True,
-            resize_img=not args.no_resize)
-        name = os.path.basename(p)
-        stem = re.sub(r"\.(jpg|png)$", "", name)
-        save_overlay(p, density, os.path.join(args.out, stem + "_density.jpg"),
-                     count=float(count), clusters=args.label_clusters,
-                     min_cluster=args.min_cluster)
-        if args.save_density:
-            import cv2
-            import numpy as np
-            orig = cv2.imread(p)
-            h, w = orig.shape[:2]
-            d = density.astype("float32")
-            mass = d.sum()
-            d = cv2.resize(d, (w, h), interpolation=cv2.INTER_LINEAR)
-            if d.sum() > 0:
-                d *= mass / d.sum()  # keep total count unchanged
-            np.save(os.path.join(args.out, stem + "_density.npy"), d)
-        rows.append((name, round(float(count))))
-        print(f"{name:35s} {count:9.0f}")
+    rows = generate_density_maps(
+        paths, args.out, args.model, args.weights, args.upscale,
+        args.no_resize or args.upscale > 1, overlay_counts=True,
+        label_clusters_qc=args.label_clusters, min_cluster=args.min_cluster)
 
     csv_path = os.path.join(args.out, f"counts_{args.model}_{args.weights}.csv")
     with open(csv_path, "w", newline="") as fh:
@@ -249,8 +260,8 @@ def main():
     print("-" * 47)
     print(f"frames: {len(counts)}  min: {min(counts)}  "
           f"median: {sorted(counts)[len(counts)//2]}  max: {max(counts)}")
-    print("NOTE: frames overlap — do NOT sum frames blindly. Sum only "
-          "frames chosen to tile the street without overlap.")
+    print("NOTE: frames overlap — do NOT sum frames blindly. The pipeline "
+          "(steps 5a/5b) does this correctly.")
     print("saved:", csv_path)
 
 
