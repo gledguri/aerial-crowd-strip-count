@@ -205,8 +205,9 @@ def main():
             img = cv2.imread(p)
             img = cv2.resize(img, None, fx=args.upscale, fy=args.upscale,
                              interpolation=cv2.INTER_CUBIC)
-            infer_path = os.path.join(tmpdir, os.path.basename(p))
-            cv2.imwrite(infer_path, img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            stem_up = os.path.splitext(os.path.basename(p))[0]
+            infer_path = os.path.join(tmpdir, stem_up + ".png")  # lossless
+            cv2.imwrite(infer_path, img)
         count, density = LWCC.get_count(
             infer_path, model=model, return_density=True,
             resize_img=not args.no_resize)

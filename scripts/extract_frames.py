@@ -118,6 +118,9 @@ def main():
                     help="keyframes per second of video to save")
     ap.add_argument("--no-autocrop", action="store_true",
                     help="use full frame (original drone footage)")
+    ap.add_argument("--png", action="store_true",
+                    help="save keyframes losslessly as PNG instead of "
+                         "JPEG q95 (bigger files, zero re-compression)")
     args = ap.parse_args()
     args.video = resolve_video(args.video)
     print(f"input video: {args.video}")
@@ -151,8 +154,10 @@ def main():
             if not ok:
                 continue
             crop = f[y:y + h, x:x + w]
-            cv2.imwrite(os.path.join(args.out, f"scene{s:02d}_f{i:05d}.jpg"),
-                        crop, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            ext, params = ((".png", []) if args.png
+                           else (".jpg", [cv2.IMWRITE_JPEG_QUALITY, 95]))
+            cv2.imwrite(os.path.join(args.out, f"scene{s:02d}_f{i:05d}{ext}"),
+                        crop, params)
     cap.release()
     n_saved = len(os.listdir(args.out))
     print(f"saved {n_saved} keyframes to {args.out}/")

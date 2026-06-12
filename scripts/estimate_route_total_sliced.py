@@ -77,7 +77,8 @@ def main():
     args.video = resolve_video(args.video)
     print(f"input video: {args.video}")
 
-    frames = sorted(glob.glob(os.path.join(args.keyframes, "*.jpg")))
+    frames = sorted(glob.glob(os.path.join(args.keyframes, "*.jpg")) +
+                    glob.glob(os.path.join(args.keyframes, "*.png")))
     if len(frames) < 2:
         raise SystemExit("need at least 2 keyframes")
     kf_idx = [int(re.search(r"_f(\d+)", os.path.basename(p)).group(1))
