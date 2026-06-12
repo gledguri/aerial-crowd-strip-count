@@ -192,7 +192,7 @@ and all its readings are **averaged**. With three keyframes sliding over
 route slices A-E:
 
 ```
-keyframe 1: [100, 180, 350]            (sees slices A, B, C)
+keyframe 1: [100, 180, 350]           (sees slices A, B, C)
 keyframe 2:      [220, 390, 470]      (sees slices B, C, D)
 keyframe 3:           [240, 570, 610] (sees slices C, D, E)
 total = 100 + (180+220)/2 + (350+390+240)/3 + (470+570)/2 + 610
