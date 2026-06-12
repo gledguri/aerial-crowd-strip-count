@@ -93,7 +93,7 @@ Recipe guidance:
 Remember: keyframes overlap heavily — **never sum this CSV across frames**.
 That's what step 3 is for.
 
-![Output](counts_dmcount_sha/output.gif)
+![Output](counts/output.gif)
 
 ## 3. Whole-route total (strip summing)
 
