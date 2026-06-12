@@ -18,9 +18,9 @@ Edit SEGMENTS below for your event and run:  python jacobs_estimate.py
 
 # (name, length_m, width_m, people_per_m2)
 SEGMENTS = [
-    ("example: boulevard south half", 400, 30, 2.0),
-    ("example: boulevard north half", 400, 30, 1.0),
-    ("example: square spill-over",    150, 40, 0.5),
+    ("example: main boulevard", 500, 30, 0.5),
+    ("example: not captured by drone", 100, 30, 0.5),
+    ("example: spill-over",    60, 10, 0.25),
 ]
 
 total = 0.0

@@ -70,6 +70,15 @@ holds several, pass the filename as the first argument.
   no app buttons/text.
 - `--fps` is keyframes per second of video. 1.5 is fine for slow flights;
   use 2-3 for fast or sped-up footage.
+- Keyframes are saved as JPEG q95 (near-lossless); add `--png` to save
+  lossless PNGs instead — every downstream step accepts both. Understand
+  what this can and cannot do: it removes the pipeline's only
+  re-compression, but **keyframes can never be better than the source
+  video**. Check the printed band size — if the cropped video is only
+  ~600 px wide, people are a few pixels tall and the estimate will run
+  low no matter the format. The fix for that is a better source file
+  (original export, higher resolution — see the filming checklist), not
+  extraction settings.
 - If the video has hard cuts (different shots stitched together), frames are
   named `scene00_*, scene01_*, ...`. Treat each scene as a separate flight:
   put each scene's frames in their own folder and run steps 2-3 per scene —
@@ -298,6 +307,11 @@ spread. Note the time of each pass — crowds turn over during an event.
   `count_crowd.py` once; it patches the package in place.
 - Keyframes contain app UI: re-run step 1 and check the printed band; you
   can also crop manually with ffmpeg and use `--no-autocrop`.
+- Keyframes look blurry / low quality: it's the source video, not the
+  extraction. Compare file sizes and resolutions of the videos you have
+  (e.g. `ffprobe` or just QuickTime's inspector) and run the pipeline on
+  the largest/highest-resolution version of the SAME flight; `--png`
+  (step 1) removes the last bit of re-compression but cannot add detail.
 - Counts look absurdly low and overlays light up only the nearest rows of
   people: increase `--upscale`; if overlays light up trees/lights instead,
   decrease it.
