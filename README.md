@@ -63,7 +63,7 @@ holds several, pass the filename as the first argument.
 
 ```bash
 .venv/bin/python scripts/count_crowd.py keyframes/ --out counts \
-      --weights QNRF --upscale 2 --save-density
+      --weights QNRF --upscale 2 --save-density --label-clusters
 ```
 
 Recipe guidance:
@@ -79,9 +79,14 @@ Recipe guidance:
 - `counts_DM-Count_QNRF.csv` — **the per-keyframe people counts** (how many
   the model sees in that whole frame).
 - `*_density.jpg` — heatmap overlays, each stamped top-center with that
-  frame's estimated count. **This is your quality control: look at
-  several.** Color must sit on the crowd, not on trees, streetlights,
-  parked cars, or app icons. If the far half of the street shows crowd but
+  frame's estimated count. With `--label-clusters`, every density cluster
+  is outlined and stamped with its own people count; large clusters are
+  subdivided into grid cells with per-cell counts, small enough to verify
+  by eye (`--min-cluster` hides labels below N people). **This is your
+  quality control: look at several.** Color must sit on the crowd, not on
+  trees, streetlights, parked cars, or app icons. Hand-count one or two
+  near-field cells against their printed number — if the model runs low
+  there, the whole total runs at least that much low. If the far half of the street shows crowd but
   no color, the model is missing it — try `--upscale 2` (or 3 on 4K input).
 - `*_density.npy` — raw density maps (needed by step 3).
 
@@ -121,6 +126,30 @@ Sanity checks before trusting it:
 - The strip method counts people where they are nearest the camera, which is
   where the model is most reliable — but anyone behind the take-off point,
   beyond the last frame, or under tree canopies is **not counted**.
+
+## 3b. Whole-route total (slice averaging) — recommended
+
+Same inputs as step 3, different math: every keyframe is mapped onto a
+shared route axis using the ground advance, so each physical slice of
+street is observed in many keyframes. Per slice, all near-field
+observations are averaged, then the averaged profile is summed over the
+route. Compared to strip summing, each slice gets ~8-15 independent
+readings instead of one, motion-estimate noise blurs instead of
+double-counting, and nothing rests on the frame's bottom edge (where
+people are clipped and counts run low).
+
+```bash
+.venv/bin/python scripts/estimate_route_total_sliced.py keyframes/ counts/
+# --use-frac 0.45  rows (from the bottom) entering the average; 1.0 = whole
+#                  frame, lower = trust only the nearest, sharpest rows
+# --slice-px 60    slice size in route_slices.csv (reporting only)
+```
+
+**Outputs in `counts/`:** `route_slices.csv` (per slice of route: mean
+observation count, averaged people, cumulative) and
+`route_total_sliced.txt` (the bottom line). The same sanity checks as in
+step 3 apply; if the two methods disagree by much more than ~30%, inspect
+the density overlays before trusting either.
 
 ## 4. Cross-check with area x density (Jacobs method)
 

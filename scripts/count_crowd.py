@@ -49,20 +49,97 @@ def _fix_lwcc_weights_path():
         importlib.reload(f)
 
 
-def save_overlay(img_path, density, out_path, count=None):
+def label_clusters(overlay, d, min_cluster, tile_above=60.0):
+    """Outline each density cluster and stamp it with its people count
+    (= density mass inside the blob). Clusters bigger than `tile_above`
+    people are subdivided into grid cells, each labeled with its own count,
+    so every printed number is small enough to eyeball-check against the
+    image. Returns (labeled_mass, n_labeled)."""
+    import cv2
+    import numpy as np
+
+    h, w = overlay.shape[:2]
+    mask = (d > 0.06 * d.max()).astype(np.uint8)
+    k = (max(5, w // 60)) | 1  # merge per-person blobs into crowd clusters
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    n, labels = cv2.connectedComponents(mask)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    fscale = max(0.45, w / 1500.0)
+    fthick = max(1, int(round(fscale * 2)))
+
+    def stamp(text, cx, cy, color=(255, 255, 255), scale=fscale):
+        thick = max(1, int(round(scale * 2)))
+        (tw, th), _ = cv2.getTextSize(text, font, scale, thick)
+        org = (int(np.clip(cx - tw / 2, 2, w - tw - 2)),
+               int(np.clip(cy + th / 2, th + 2, h - 2)))
+        cv2.putText(overlay, text, org, font, scale, (0, 0, 0),
+                    thick + 3, cv2.LINE_AA)
+        cv2.putText(overlay, text, org, font, scale, color, thick,
+                    cv2.LINE_AA)
+
+    labeled_mass, n_labeled = 0.0, 0
+    for i in range(1, n):
+        comp = labels == i
+        people = float(d[comp].sum())
+        if people < min_cluster:
+            continue
+        labeled_mass += people
+        n_labeled += 1
+        contours, _ = cv2.findContours(comp.astype(np.uint8),
+                                       cv2.RETR_EXTERNAL,
+                                       cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(overlay, contours, -1, (255, 255, 255), 1)
+        ys, xs = np.nonzero(comp)
+        if people <= tile_above:
+            stamp(f"{people:.0f}", xs.mean(), ys.mean())
+            continue
+        # big cluster: grid cells with per-cell counts, total above the box
+        t = max(48, w // 8)
+        y0, x0 = int(ys.min()), int(xs.min())
+        for ty in range(y0, int(ys.max()) + 1, t):
+            for tx in range(x0, int(xs.max()) + 1, t):
+                sub = comp[ty:ty + t, tx:tx + t]
+                if not sub.any():
+                    continue
+                cell = float(d[ty:ty + t, tx:tx + t][sub].sum())
+                if cell < min_cluster:
+                    continue
+                cv2.rectangle(overlay, (tx, ty),
+                              (min(tx + t, w - 1), min(ty + t, h - 1)),
+                              (180, 180, 180), 1)
+                cys, cxs = np.nonzero(sub)
+                stamp(f"{cell:.0f}", tx + cxs.mean(), ty + cys.mean(),
+                      scale=fscale * 0.8)
+        stamp(f"cluster: {people:.0f}", xs.mean(), y0 - 14,
+              color=(0, 255, 255))
+    return labeled_mass, n_labeled
+
+
+def save_overlay(img_path, density, out_path, count=None, clusters=False,
+                 min_cluster=3.0):
     import cv2
     import numpy as np
 
     img = cv2.imread(img_path)
     d = density.astype("float32")
+    mass = float(d.sum())
     d = cv2.resize(d, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_CUBIC)
+    d = np.clip(d, 0, None)
+    if d.sum() > 0:
+        d *= mass / d.sum()  # mass-preserving: blob sums stay people counts
     if d.max() > 0:
         d = d / d.max()
     heat = cv2.applyColorMap((d * 255).astype("uint8"), cv2.COLORMAP_JET)
     overlay = cv2.addWeighted(img, 0.55, heat, 0.45, 0)
-    if count is not None:
+    label = None if count is None else f"~{count:,.0f} people"
+    if clusters and mass > 0:
+        d_people = d / d.sum() * mass if d.sum() > 0 else d
+        labeled, n = label_clusters(overlay, d_people, min_cluster)
+        if label:
+            label += f" | {labeled:,.0f} in {n} clusters"
+    if label:
         h, w = overlay.shape[:2]
-        label = f"~{count:,.0f} people"
         font, scale = cv2.FONT_HERSHEY_SIMPLEX, w / 900.0
         thick = max(2, int(round(scale * 2)))
         (tw, th), _ = cv2.getTextSize(label, font, scale, thick)
@@ -88,6 +165,11 @@ def main():
                     help="upscale factor before inference; 2 helps recover "
                          "small far-away people in low-res footage "
                          "(implies --no-resize)")
+    ap.add_argument("--label-clusters", action="store_true",
+                    help="outline each density cluster on the overlay and "
+                         "stamp it with its people count, for visual QC")
+    ap.add_argument("--min-cluster", type=float, default=3.0,
+                    help="only label clusters of at least this many people")
     ap.add_argument("--save-density", action="store_true",
                     help="save per-frame density maps as .npy (rescaled to "
                          "original frame size, mass-preserving) for "
@@ -131,7 +213,8 @@ def main():
         name = os.path.basename(p)
         stem = re.sub(r"\.(jpg|png)$", "", name)
         save_overlay(p, density, os.path.join(args.out, stem + "_density.jpg"),
-                     count=float(count))
+                     count=float(count), clusters=args.label_clusters,
+                     min_cluster=args.min_cluster)
         if args.save_density:
             import cv2
             import numpy as np
