@@ -1,0 +1,14 @@
+video                                  : input_video/dita_10.mp4
+route length (YOUR input)              : 500 m
+scale                                  : 24.5 cm/px
+crowd area (inside green outline)      : 30,701 m2
+model people inside area / route total : 3,497 / 3,657
+model implied mean density             : 0.11 people/m2
+
+reference totals at standard density classes:
+  0.5 p/m2 loose crowd                 :   15,350 people  (model would need x4.4)
+  1.0 p/m2 steady walking crowd        :   30,701 people  (model would need x8.8)
+  2.0 p/m2 slow shuffle                :   61,402 people  (model would need x17.6)
+  4.0 p/m2 packed tight (rare outdoors):  122,803 people  (model would need x35.1)
+
+How to use this: open route_area.jpg and check the green outline hugs the crowd (the area drives everything). Then look at the footage segment by segment (density_slices.csv) and decide which density class each stretch really is. The matching reference total is your Jacobs estimate; the 'model would need xF' of your chosen class is a MEASURED --calibrate factor for steps 3b/3c.

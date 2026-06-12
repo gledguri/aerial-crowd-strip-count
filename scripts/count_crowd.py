@@ -49,6 +49,18 @@ def _fix_lwcc_weights_path():
         importlib.reload(f)
 
 
+def crowd_mask(d, w):
+    """Binary mask of where the density map says 'crowd': threshold at 6%
+    of peak, then close gaps so per-person blobs merge into crowd regions
+    (kernel scales with image width w)."""
+    import cv2
+
+    mask = (d > 0.06 * d.max()).astype("uint8")
+    k = (max(5, w // 60)) | 1
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+
 def label_clusters(overlay, d, min_cluster, tile_above=60.0):
     """Outline each density cluster and stamp it with its people count
     (= density mass inside the blob). Clusters bigger than `tile_above`
@@ -59,11 +71,7 @@ def label_clusters(overlay, d, min_cluster, tile_above=60.0):
     import numpy as np
 
     h, w = overlay.shape[:2]
-    mask = (d > 0.06 * d.max()).astype(np.uint8)
-    k = (max(5, w // 60)) | 1  # merge per-person blobs into crowd clusters
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-    n, labels = cv2.connectedComponents(mask)
+    n, labels = cv2.connectedComponents(crowd_mask(d, w))
     font = cv2.FONT_HERSHEY_SIMPLEX
     fscale = max(0.45, w / 1500.0)
     fthick = max(1, int(round(fscale * 2)))

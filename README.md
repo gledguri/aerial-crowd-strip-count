@@ -34,6 +34,7 @@ Pipeline at a glance:
 | 3b | `estimate_route_total_sliced.py` | route total, slice averaging — **recommended** | `route_slices.csv`, `route_total_sliced.txt` |
 | 3c | `stitch_route.py` | 2-D averaging + whole-flight mosaic | `route_mosaic*.jpg`, `route_total_mosaic.txt` |
 | 4 | `jacobs_estimate.py` | independent area x density cross-check | printed estimate |
+| 5 | `estimate_by_density.py` | people/m² x measured route length → measured calibration factor | `route_area.jpg`, `density_report.txt` |
 
 ---
 
@@ -88,7 +89,8 @@ holds several, pass the filename as the first argument.
 
 ```bash
 .venv/bin/python scripts/count_crowd.py keyframes/ --out counts \
-      --weights QNRF --upscale 2 --save-density --label-clusters
+      --weights QNRF --upscale 2 --save-density
+# add --label-clusters for QC overlays with per-cluster/cell counts
 ```
 
 Recipe guidance:
@@ -201,6 +203,7 @@ and counts run low). Two deliberate choices to know about:
 # --use-frac 0.45  rows (from the bottom) entering the average; 1.0 = whole
 #                  frame, lower = trust only the nearest, sharpest rows
 # --slice-px 60    slice size in route_slices.csv (reporting only)
+# --calibrate F    multiply the total by a MEASURED factor (see step 5)
 ```
 
 **Outputs in `counts/`:** `route_slices.csv` (per slice of route: mean
@@ -222,14 +225,16 @@ the actual route total used in the calculation.
 
 ```bash
 .venv/bin/python scripts/stitch_route.py keyframes/ counts/
+# --label-clusters  draw per-cluster/cell QC counts (default: banner only)
+# --calibrate F     multiply the total by a MEASURED factor (see step 5)
 ```
 
 **Outputs in `counts/`:** `route_mosaic.jpg` (the stitched flight — also
-handy for measuring the route for step 4), `route_mosaic_density.jpg`
-(averaged density + per-cluster/cell counts over the whole route), and
-`route_total_mosaic.txt`. Expect the total to land within a few % of step
-3b; large disagreement means the motion tracking failed — look at the
-mosaic, misalignment is obvious to the eye.
+handy for measuring the route for steps 4/5), `route_mosaic_density.jpg`
+(averaged density over the whole route, stamped with the route total),
+and `route_total_mosaic.txt`. Expect the total to land within a few % of
+step 3b; large disagreement means the motion tracking failed — look at
+the mosaic, misalignment is obvious to the eye.
 
 You can also feed the stitched picture back through the model in one pass
 (`count_crowd.py counts/route_mosaic.jpg --out counts_mosaic ...`) as a
@@ -260,6 +265,10 @@ on night/compressed video. If 3b and 3c disagree by much more than a few
 %, the motion track is suspect: open `route_mosaic.jpg`, misalignment is
 obvious to the eye.
 
+If the floor is clearly far below what the footage shows (dense crowd,
+tiny number), do NOT invent a multiplier — measure one with step 5 (or
+hand counts) and pass it to `--calibrate`.
+
 ## 4. Cross-check with area x density (Jacobs method)
 
 Never publish a model number alone. Measure the occupied street on Google
@@ -277,7 +286,43 @@ disagree by more than ~2x, find out why before quoting either (usual
 culprits: model missing the far field — check overlays; or your width/length
 measurement including empty sidewalk).
 
-## 5. Reporting
+## 5. Method 5 — people/m² x measured route length
+
+The crowd model under-counts on bad footage, but its *map* of where the
+crowd is stays good. Method 5 works in physical units instead of trusting
+the model's absolute numbers: measure the real length of the strip the
+drone covered (Google Maps/Earth "Measure distance", or directly on
+`route_mosaic.jpg` against a known landmark distance), then:
+
+```bash
+.venv/bin/python scripts/estimate_by_density.py --route-length-m 540 \
+      keyframes/ counts/
+```
+
+The length must be the ground covered by the mosaic **bottom edge to top
+edge**, not the whole street if the drone covered less. Reference totals
+scale with the *square* of this length — measure it carefully.
+
+**Outputs in `counts/`:**
+
+- `route_area.jpg` — the mosaic with the measured crowd area outlined in
+  green. **Check this first: the area drives everything.**
+- `density_report.txt` — crowd area in m², the model's implied people/m²,
+  reference totals at the standard density classes (0.5 loose / 1 walking
+  / 2 slow shuffle / 4 packed), and the calibration factor the model
+  would need to reach each class.
+- `density_slices.csv` — width, area, model people and people/m² per
+  stretch of route, so you can assign a density class per segment
+  instead of one for the whole route.
+
+How to turn this into a defensible number: look at the footage segment by
+segment and decide which density class each stretch *visibly* is. The
+matching reference total is your Jacobs estimate built on the model's own
+crowd outline; the "model would need xF" line of your chosen class is a
+**measured** `--calibrate` factor for steps 3b/3c — quote both and they
+should now agree.
+
+## 6. Reporting
 
 Quote a **range, not a number** (e.g. Jacobs x0.7 .. x1.3, with the
 averaged route total from 3b/3c as the floor). For multiple videos/passes
@@ -333,8 +378,9 @@ not update itself:
 ```bash
 brew install imagemagick
 cd counts/
-magick *_density.jpg -delay 10 -loop 0 output.gif
+magick scene*_density.jpg -delay 10 -loop 0 output.gif
 ```
+(`scene*` keeps the route mosaic images out of the animation.)
 
 Converting output to video
 ```bash

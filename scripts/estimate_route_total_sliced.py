@@ -72,6 +72,10 @@ def main():
     ap.add_argument("--window", type=float, default=0.45,
                     help="fraction of band height (from bottom) used for "
                          "motion tracking")
+    ap.add_argument("--calibrate", type=float, default=1.0,
+                    help="multiply the total by a MEASURED calibration "
+                         "factor (hand count vs model on sample cells, or "
+                         "estimate_by_density.py); never a free parameter")
     ap.add_argument("--no-autocrop", action="store_true")
     args = ap.parse_args()
     args.video = resolve_video(args.video)
@@ -160,7 +164,11 @@ def main():
         f"{n_bins} / {mean_obs:.1f}\n"
         f"people on slices seen in the near field       : {near_total:.0f}\n"
         f"people on the far-field-only final stretch    : {far_total:.0f}\n"
-        f"ESTIMATED TOTAL ALONG THE ROUTE               : {total:.0f}\n"
+        f"model route total                             : {total:.0f}\n"
+        f"calibration factor                            : "
+        f"x{args.calibrate:g}\n"
+        f"ESTIMATED TOTAL ALONG THE ROUTE               : "
+        f"{total * args.calibrate:.0f}\n"
         "\nCaveats: each slice is the mean of its near-field observations, "
         "so single-frame noise is averaged out, but the model's systematic "
         "under-counting (night footage, compression, tree canopies) is NOT "
