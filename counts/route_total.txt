@@ -1,8 +1,0 @@
-video                                         : input_video/dita_10.mp4
-keyframes                                     : 45
-cumulative ground advance (px / frame-heights): 1367 / 2.1
-people who exited the frame during the flight : 1842
-people still visible in the last keyframe     : 688
-ESTIMATED TOTAL ALONG THE ROUTE               : 2530
-
-Caveats: far-field people in the final frame are under-counted; crowd walking relative to the drone biases strips by roughly (walking speed / drone ground speed); night footage and compression push everything toward UNDER-counting.

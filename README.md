@@ -104,12 +104,18 @@ occupied **area in m²**. The pixel→meter scale is calibrated so the crowd
 outline matches your measurement:
 
 ```bash
-.venv/bin/python scripts/estimate_by_density.py --area-m2 15000 \
-      keyframes/ counts/
-# or, if you only measured the strip length the drone covered:
-#   --route-length-m 350      (mosaic bottom edge to top edge)
-# --segment-m 50              strip length for the per-strip breakdown
+.venv/bin/python scripts/estimate_by_density.py --area-m2 14000 \
+      --route-length-m 700 keyframes/ counts/
 ```
+
+- Best: give **both** `--area-m2` and `--route-length-m` (the ground
+  length covered by the mosaic, bottom to top edge). Oblique drone footage
+  has different ground resolution along vs across the flight, so the
+  length anchors the along-route scale and the area the across-route
+  scale — strip lengths and street widths then match reality.
+- With only one of the two, an isotropic scale is derived from it (fine
+  for near-nadir footage, distorted geometry for oblique footage).
+- `--segment-m 50` sets the strip length for the per-strip breakdown.
 
 Model flags (only matter the first time, when the density maps are
 computed):
