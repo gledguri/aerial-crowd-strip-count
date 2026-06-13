@@ -6,7 +6,7 @@ mean overlapping observations per ground px   : 7.6
 people on ground seen in the near field       : 3474
 people on the far-field-only final stretch    : 183
 model route total                             : 3657
-calibration factor                            : x1
-ESTIMATED TOTAL ALONG THE ROUTE               : 3657
+calibration factor                            : x4.8
+ESTIMATED TOTAL ALONG THE ROUTE               : 17556
 
 Same averaging as estimate_route_total_sliced.py but aligned in 2-D (lateral drift compensated). Derive the calibration factor from measurements (hand counts or estimate_by_density.py), never by eye.
