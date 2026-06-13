@@ -118,6 +118,20 @@ def main():
     masked_total = float(avg[mask].sum())
     mean_density = masked_total / area_m2 if area_m2 > 0 else 0.0
 
+    # independent density estimate from people-as-units: count local peaks
+    # of the density map (one peak = one localized person) instead of
+    # integrating mass. Only physically meaningful when one person spans
+    # enough pixels for neighbors to stay separable.
+    person_px = 0.45 / s  # shoulder width seen from above
+    sm = cv2.GaussianBlur(avg, (0, 0), 1.0)
+    k = max(3, int(round(0.35 / s)) | 1)  # min spacing between two people
+    maxf = cv2.dilate(sm, np.ones((k, k), np.float32))
+    vals = sm[mask & (sm > 0)]
+    thr = float(np.percentile(vals, 60)) if vals.size else 0.0
+    n_peaks = int(((sm >= maxf - 1e-12) & mask & (sm > thr)).sum())
+    peak_density = n_peaks / area_m2 if area_m2 > 0 else 0.0
+    peaks_valid = person_px >= 5.0
+
     # per-strip breakdown along the route (canvas bottom = route start)
     seg_px = max(1, int(round(args.segment_m / s)))
     segs = []
@@ -187,9 +201,24 @@ def main():
         f"scale / implied route length           : {s * 100:.1f} cm/px / "
         f"{route_len_m:.0f} m\n"
         f"crowd area (inside green outline)      : {area_m2:,.0f} m2\n"
+        f"one person at this scale               : ~{person_px:.1f} px "
+        f"wide\n"
         f"\nDENSITY ESTIMATE (model-implied; absolute level is a LOWER "
         f"bound on bad footage,\nthe per-strip variation is the "
         f"trustworthy part):\n{verdict}"
+        f"\ndensity via counting people as units (blob peaks): "
+        f"{peak_density:.2f} people/m2\n")
+    if peaks_valid:
+        summary += ("  individuals are resolvable at this scale — this is "
+                    "a usable independent estimate.\n")
+    else:
+        summary += (
+            f"  UNRELIABLE here: a person is only ~{person_px:.1f} px, "
+            f"below the ~5 px needed to\n  separate neighbors, so blob "
+            f"counting under-reads. On this footage the absolute\n"
+            f"  density can only come from your eyes (step 4) or from "
+            f"higher-resolution source\n  video.\n")
+    summary += (
         f"\nfor orientation, the standard density classes over this area:\n"
         f"{ref_lines}"
         "\nNext (step 4): open route_area.jpg and check the green outline "

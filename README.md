@@ -21,6 +21,9 @@ the model's own route totals by tracking how far the ground slides between
 overlapping frames and averaging every reading of the same ground (step
 5); then calibrate the model totals against the Jacobs total — a measured
 factor, not a guess — and produce the final report and visuals (step 6).
+On high-resolution footage an alternative point-based engine (P2PNet, one
+detected point per person) can drive the same pipeline — see "Alternative
+engine" near the end.
 
 Pipeline at a glance:
 
@@ -32,6 +35,7 @@ Pipeline at a glance:
 | 5a | `estimate_route_total_sliced.py` | model route total, slice averaging (1-D) | `route_slices.csv`, `route_total_sliced.txt` |
 | 5b | `stitch_route.py` | model route total, mosaic averaging (2-D) + the whole flight stitched into one picture | `route_mosaic*.jpg`, `route_total_mosaic.txt` |
 | 6 | `report_route.py` | calibrate step 5 against step 4, re-stamp overlays with a climbing counter, final range | `report.txt`, re-stamped `*_density.jpg` |
+| alt | `p2pnet_maps.py` | optional second engine: P2PNet, one point per person (see "Alternative engine" below) | `counts_p2p/*_density.npy/.jpg` |
 
 ---
 
@@ -121,12 +125,17 @@ computed):
 - `route_area.jpg` — the whole flight stitched into one picture, with the
   crowd area outlined in green. **Check this first: the outline must hug
   the crowd**, because the area drives everything downstream.
-- `density_report.txt` — the geometry (scale, implied route length, area)
-  and the **density estimate**: if the density is roughly uniform along
-  the route (spread ≤ 30%), one single people/m² figure; if it varies, a
-  per-strip table (each strip with its length, width, area and density).
-  Reference totals at the standard density classes are listed for
-  orientation.
+- `density_report.txt` — the geometry (scale, implied route length, area,
+  and **how many pixels wide one person is** at this scale) and the
+  **density estimate**: if the density is roughly uniform along the route
+  (spread ≤ 30%), one single people/m² figure; if it varies, a per-strip
+  table (each strip with its length, width, area and density). A second,
+  independent density estimate counts people as *units* (blob peaks in
+  the density map, sized by the person's pixel footprint) — it is
+  reported with an automatic validity check: it needs one person to span
+  ≥ ~5 px; below that (low-res source) it under-reads and says so, and
+  the absolute density must come from your eyes in step 4. Reference
+  totals at the standard density classes are listed for orientation.
 - `jacobs_segments.csv` — every strip's measured geometry plus an empty
   `assumed_density_p_m2` column. **This is the input of step 4.**
 - `*_density.npy` + `*_density.jpg` — the per-keyframe density maps and
@@ -257,6 +266,43 @@ the density class assessment, not the model, deserves your attention.
 ![Output](output/side_by_side.gif)
 
 ---
+
+## Alternative engine: P2PNet (people as points)
+
+[P2PNet](https://github.com/TencentYoutuResearch/CrowdCounting-P2PNet)
+(Tencent YouTu, ICCV'21) predicts one **(x, y) point per person** with a
+confidence score instead of a density map — the "count people as units"
+approach. Setup (once):
+
+```bash
+git clone --depth 1 \
+  https://github.com/TencentYoutuResearch/CrowdCounting-P2PNet \
+  third_party/p2pnet
+```
+
+(pretrained SHTechA weights ship inside the repo; the adapter auto-patches
+three small incompatibilities with current PyTorch on first run)
+
+```bash
+.venv/bin/python scripts/p2pnet_maps.py keyframes/ --out counts_p2p \
+      --upscale 2 --threshold 0.35
+```
+
+It writes pipeline-compatible `*_density.npy` maps (exactly 1.0 per
+detected person) and `*_density.jpg` dot overlays into `counts_p2p/` —
+**check the dots sit on heads**. Every pipeline step then works against
+that folder unchanged, e.g.:
+
+```bash
+.venv/bin/python scripts/stitch_route.py keyframes/ counts_p2p/
+```
+
+Reality check: point localization needs *more* pixels per person than
+density regression, not fewer. On low-res night footage (person ≈ 3 px)
+P2PNet finds ~2-3x fewer people than DM-Count — use it as a second
+opinion there, not as the main engine. On footage where one person is
+≥ 5-8 px it becomes the better engine: unit counts, directly usable
+densities, and dots you can verify by eye.
 
 ## Filming checklist (for whoever flies the drone)
 

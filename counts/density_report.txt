@@ -2,11 +2,18 @@ video                                  : input_video/dita_10.mp4
 scale anchored on                      : YOUR area measurement
 scale / implied route length           : 17.1 cm/px / 349 m
 crowd area (inside green outline)      : 15,000 m2
+one person at this scale               : ~2.6 px wide
 
 DENSITY ESTIMATE (model-implied; absolute level is a LOWER bound on bad footage,
 the per-strip variation is the trustworthy part):
 density is roughly UNIFORM along the route (spread 10%):
   -> use ONE density: 0.23 people/m2 over 15,000 m2
+
+density via counting people as units (blob peaks): 0.07 people/m2
+  UNRELIABLE here: a person is only ~2.6 px, below the ~5 px needed to
+  separate neighbors, so blob counting under-reads. On this footage the absolute
+  density can only come from your eyes (step 4) or from higher-resolution source
+  video.
 
 for orientation, the standard density classes over this area:
   0.5 p/m2 loose crowd                 :    7,500 people
