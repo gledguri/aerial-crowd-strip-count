@@ -1,0 +1,9 @@
+video                                   : input_video/dita_10.mp4
+5a slice-averaging model total          : 3,647
+5b mosaic-averaging model total         : 3,672
+step-4 Jacobs total                     : 8,000
+calibration factor F                    : x2.19
+calibrated 5a / 5b                      : 7,973 / 8,027
+FINAL ESTIMATE                          : 8,028  (quote 5,581 .. 10,436 as the honest range)
+
+Every counts/scene*_density.jpg now shows the accumulated calibrated count up to that frame; rebuild the gif to get the climbing counter (see README Extras).

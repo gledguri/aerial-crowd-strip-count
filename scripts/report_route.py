@@ -99,8 +99,8 @@ def main():
         npy = os.path.join(args.counts, stem + "_density.npy")
         out = os.path.join(args.counts, stem + "_density.jpg")
         save_overlay(path, np.load(npy), out,
-                     label=f"counted so far: ~{cum:,.0f}")
-        print(f"{stem:28s} counted so far: {cum:9,.0f}")
+                     label=f"Counted ~ {cum:,.0f}")
+        print(f"{stem:28s} Counted ~ {cum:9,.0f}")
     final = float(avg.sum()) * F
 
     lo, hi = sorted([total_5a * F, total_5b * F])

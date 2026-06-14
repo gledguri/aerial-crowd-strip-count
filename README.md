@@ -251,7 +251,7 @@ your area measurement and your density assessment, not invented.
 - writes `counts/report.txt`: both model totals, the Jacobs total, F, the
   calibrated totals, and the **final estimate with the honest range to
   quote**;
-- re-stamps every `counts/scene*_density.jpg` so the banner shows the
+- re-stamps every `counts/scene*_density.jpg` with `Counted ~ N`, the
   **accumulated calibrated count up to that frame** — frame 1 shows
   everyone visible at the start, each next frame adds only the newly
   revealed ground, the last frame shows the final number. Rebuild the gif

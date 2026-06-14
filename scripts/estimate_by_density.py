@@ -179,6 +179,7 @@ def main():
     # uniform or not? judge on strips that actually hold crowd
     dens = [g["density"] for g in segs if g["width_m"] >= 2.0]
     cv = float(np.std(dens) / np.mean(dens)) if dens else 0.0
+    strip_mean = float(np.mean(dens)) if dens else 0.0
     if cv <= 0.30:
         verdict = (f"density is roughly UNIFORM along the route "
                    f"(spread {cv:.0%}):\n"
@@ -191,6 +192,10 @@ def main():
             f"{g['density']:.2f} p/m2\n" for g in segs)
         verdict = (f"density VARIES along the route (spread {cv:.0%}) — "
                    f"use the per-strip values:\n{lines}")
+    verdict += (f"average density of all strips: {mean_density:.2f} "
+                f"people/m2 (area-weighted)\n"
+                f"                               {strip_mean:.2f} "
+                f"people/m2 (simple mean of the strips)\n")
 
     # QC image: the area everything is based on
     overlay = mosaic.copy()
