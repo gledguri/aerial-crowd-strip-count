@@ -21,15 +21,17 @@ row, so lateral drift no longer smears the average.
 
 Usage:
   python stitch_route.py [VIDEO] keyframes/ counts_dir/
-        [--use-frac 0.45] [--window 0.45] [--calibrate 1.0]
-        [--label-clusters] [--min-cluster 3] [--no-autocrop]
+        [--out counts_mosaic] [--use-frac 0.45] [--window 0.45]
+        [--calibrate 1.0] [--label-clusters] [--min-cluster 3]
+        [--no-autocrop]
 counts_dir must contain *_density.npy from count_crowd.py --save-density.
 
-Outputs (written into counts_dir):
+Outputs (written into --out, default counts_mosaic/):
   route_mosaic.jpg          - the stitched flight
   route_mosaic_density.jpg  - averaged density over the mosaic; the banner
-                              shows the route total (per-cluster/cell QC
-                              numbers only with --label-clusters)
+                              shows the (calibrated) total counted people
+                              (per-cluster/cell QC numbers only with
+                              --label-clusters)
   route_total_mosaic.txt    - the final numbers
 """
 import argparse
@@ -128,6 +130,8 @@ def main():
                     help="video file (default: the one video in input_video/)")
     ap.add_argument("keyframes")
     ap.add_argument("counts", help="dir with *_density.npy from count_crowd.py")
+    ap.add_argument("--out", default="counts_mosaic",
+                    help="dir for the mosaic outputs (default: counts_mosaic)")
     ap.add_argument("--use-frac", type=float, default=0.45,
                     help="fraction of frame height (from the bottom) whose "
                          "density rows enter the average")
@@ -158,16 +162,15 @@ def main():
     mean_obs = float(cnt_near[covered].mean())
     final = total * args.calibrate
 
-    mosaic_path = os.path.join(args.counts, "route_mosaic.jpg")
+    os.makedirs(args.out, exist_ok=True)
+    mosaic_path = os.path.join(args.out, "route_mosaic.jpg")
     cv2.imwrite(mosaic_path, mosaic, [cv2.IMWRITE_JPEG_QUALITY, 92])
 
     vis = avg / avg.max() if avg.max() > 0 else avg
     heat = cv2.applyColorMap((vis * 255).astype(np.uint8), cv2.COLORMAP_JET)
     heat[~seen] = 0
     overlay = cv2.addWeighted(mosaic, 0.55, heat, 0.45, 0)
-    text = f"route total ~{final:,.0f}"
-    if args.calibrate != 1.0:
-        text += f" (model {total:,.0f} x {args.calibrate:g})"
+    text = f"Counted ~ {final:,.0f}"
     if args.label_clusters:
         labeled, n = label_clusters(overlay, avg, args.min_cluster)
         text += f" | {labeled:,.0f} in {n} clusters"
@@ -179,7 +182,7 @@ def main():
                 cv2.LINE_AA)
     cv2.putText(overlay, text, org, font, scale, (255, 255, 255), thick,
                 cv2.LINE_AA)
-    overlay_path = os.path.join(args.counts, "route_mosaic_density.jpg")
+    overlay_path = os.path.join(args.out, "route_mosaic_density.jpg")
     cv2.imwrite(overlay_path, overlay, [cv2.IMWRITE_JPEG_QUALITY, 92])
 
     summary = (
@@ -201,7 +204,7 @@ def main():
         "2-D (lateral drift compensated). Derive the calibration factor "
         "from measurements (hand counts or estimate_by_density.py), never "
         "by eye.\n")
-    total_txt = os.path.join(args.counts, "route_total_mosaic.txt")
+    total_txt = os.path.join(args.out, "route_total_mosaic.txt")
     with open(total_txt, "w") as fh:
         fh.write(summary)
 

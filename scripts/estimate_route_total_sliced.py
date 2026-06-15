@@ -146,14 +146,16 @@ def main():
     with open(slices_csv, "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["route_start_px", "route_end_px", "mean_observations",
-                    "people_in_slice", "cumulative_people"])
+                    "people_in_slice", "cumulative_people",
+                    "cumulative_people_calibrated"])
         cum = 0.0
         for s in range(0, n_bins, args.slice_px):
             e = min(s + args.slice_px, n_bins)
             people = float(avg[s:e].sum())
             cum += people
             w.writerow([s, e, round(float(cnt_near[s:e].mean()), 1),
-                        round(people, 1), round(cum, 1)])
+                        round(people, 1), round(cum, 1),
+                        round(cum * args.calibrate, 1)])
 
     summary = (
         f"video                                         : {args.video}\n"

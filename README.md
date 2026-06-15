@@ -33,7 +33,7 @@ Pipeline at a glance:
 | 3 | `estimate_by_density.py` | crowd geometry + people/m², anchored on YOUR area measurement (estimates density maps automatically) | `route_area.jpg`, `jacobs_segments.csv`, `density_report.txt` |
 | 4 | `jacobs_estimate.py` | area x density total from the strips you assessed | printed Jacobs total |
 | 5a | `estimate_route_total_sliced.py` | model route total, slice averaging (1-D) | `route_slices.csv`, `route_total_sliced.txt` |
-| 5b | `stitch_route.py` | model route total, mosaic averaging (2-D) + the whole flight stitched into one picture | `route_mosaic*.jpg`, `route_total_mosaic.txt` |
+| 5b | `stitch_route.py` | model route total, mosaic averaging (2-D) + the whole flight stitched into one picture | `counts_mosaic/route_mosaic*.jpg`, `route_total_mosaic.txt` |
 | 6 | `report_route.py` | calibrate step 5 against step 4, re-stamp overlays with a climbing counter, final range | `report.txt`, re-stamped `*_density.jpg` |
 | alt | `p2pnet_maps.py` | optional second engine: P2PNet, one point per person (see "Alternative engine" below) | `counts_p2p/*_density.npy/.jpg` |
 
@@ -209,14 +209,18 @@ the average, and also outputs the stitched flight as one picture:
 # per-cluster/cell counts
 ```
 
-**Outputs in `counts/`:** `route_total_sliced.txt` + `route_slices.csv`
-(5a), `route_total_mosaic.txt` + `route_mosaic.jpg` +
-`route_mosaic_density.jpg` (5b).
+**Outputs:** 5a writes into `counts/`: `route_total_sliced.txt` and
+`route_slices.csv` (the latter has a `cumulative_people_calibrated`
+column = the running total multiplied by `--calibrate F`). 5b writes into
+`counts_mosaic/` (override with `--out`): `route_total_mosaic.txt`,
+`route_mosaic.jpg`, and `route_mosaic_density.jpg`, whose banner shows the
+counted total `Counted ~ N` (calibrated when `--calibrate` is given).
 
 Sanity checks:
 
 - The two totals should agree within a few %. If not, the motion track is
-  suspect — open `route_mosaic.jpg`, misalignment is obvious to the eye.
+  suspect — open `counts_mosaic/route_mosaic.jpg`, misalignment is obvious
+  to the eye.
 - "cumulative ground advance" should be several frame-heights for a
   flight along a long street. If it's ~0, motion tracking failed
   (hovering drone, footage too dark) — fall back to picking
@@ -349,6 +353,41 @@ densities, and dots you can verify by eye.
 - GPU is not required; CPU inference takes a few seconds per frame.
 
 ## Extras
+### Stamping a day label under the count
+
+Adds a manual label (e.g. `Day 10`) centered just below the `Counted ~ N`
+banner on every `*density.jpg`. Run it **once, after step 6** (step 6
+re-writes the frames fresh; running this twice would stamp twice). Set
+`DAY` and the target glob, then run with `.venv/bin/python`:
+
+```python
+import cv2, glob, os
+
+DAY = "Day 10"                      # <- set this manually
+IMAGES = "counts/*density.jpg"      # which images to stamp
+
+for path in sorted(glob.glob(IMAGES)):
+    img = cv2.imread(path)
+    h, w = img.shape[:2]
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = w / 900.0
+    thick = max(2, int(round(scale * 2)))
+    # same geometry as the "Counted ~" banner, so the day sits just below it
+    (_, bh), _ = cv2.getTextSize("Counted ~ 0", font, scale, thick)
+    banner_baseline = bh + max(12, h // 40)
+    dscale = scale * 0.8
+    dthick = max(1, int(round(dscale * 2)))
+    (dw, dh), _ = cv2.getTextSize(DAY, font, dscale, dthick)
+    org = ((w - dw) // 2, banner_baseline + dh + max(8, h // 80))
+    cv2.putText(img, DAY, org, font, dscale, (0, 0, 0), dthick + 4, cv2.LINE_AA)
+    cv2.putText(img, DAY, org, font, dscale, (255, 255, 255), dthick, cv2.LINE_AA)
+    cv2.imwrite(path, img, [cv2.IMWRITE_JPEG_QUALITY, 90])
+    print("stamped", os.path.basename(path))
+```
+
+Rebuild the gif afterwards (below) to carry the label into the animation.
+To also stamp the stitched mosaic, set `IMAGES = "counts_mosaic/*density.jpg"`.
+
 ### Converting output images to .gif
 
 Run this **from inside `counts/`** (the gif is written to the folder you

@@ -65,6 +65,9 @@ def main():
     ap.add_argument("--calibrate", type=float, default=None,
                     help="use this factor directly instead of deriving it "
                          "from --jacobs-total")
+    ap.add_argument("--mosaic-dir", default="counts_mosaic",
+                    help="dir holding route_total_mosaic.txt from "
+                         "stitch_route.py (default: counts_mosaic)")
     ap.add_argument("--use-frac", type=float, default=0.45)
     ap.add_argument("--window", type=float, default=0.45)
     ap.add_argument("--no-autocrop", action="store_true")
@@ -76,8 +79,12 @@ def main():
 
     total_5a = read_model_total(
         os.path.join(args.counts, "route_total_sliced.txt"))
-    total_5b = read_model_total(
-        os.path.join(args.counts, "route_total_mosaic.txt"))
+    # stitch_route.py writes into counts_mosaic/ by default; fall back to
+    # the input dir for older runs that wrote it next to the density maps
+    mosaic_txt = os.path.join(args.mosaic_dir, "route_total_mosaic.txt")
+    if not os.path.exists(mosaic_txt):
+        mosaic_txt = os.path.join(args.counts, "route_total_mosaic.txt")
+    total_5b = read_model_total(mosaic_txt)
     model_mean = (total_5a + total_5b) / 2
     if args.calibrate is not None:
         F = args.calibrate
