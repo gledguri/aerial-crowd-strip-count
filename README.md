@@ -375,19 +375,26 @@ are standing in), and re-run it after every step-3 or step-6 run — it
 does not update itself:
 
 ```bash
-brew install imagemagick
-cd counts/
-magick scene*_density.jpg -delay 10 -loop 0 output.gif
+#brew install imagemagick
+
+magick ./counts/scene*_density.jpg -delay 10 -loop 0 output/output.gif
+magick ./keyframes/scene*.jpg -delay 10 -loop 0 output/input.gif
+
+ffmpeg -i output/input.gif -i output/output.gif -filter_complex hstack=inputs=2 output/day_10.gif
 ```
 (`scene*` keeps the route mosaic images out of the animation.)
 
 Converting output to video
 ```bash
-brew install ffmpeg
-cd counts/
+#brew install ffmpeg
 
-ffmpeg -i output.gif \
--vf "scale=1206:718" \
+
+SCALE=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0:s=: "$(ls counts/*density.jpg | head -1)")
+
+ffmpeg -i output/day_10.gif \
+-vf "scale=$SCALE,scale=trunc(iw/2)*2:trunc(ih/2)*2" \
 -pix_fmt yuv420p \
-density_video.mp4
+output/day_10.mp4
+
+
 ```
