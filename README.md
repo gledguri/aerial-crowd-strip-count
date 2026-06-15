@@ -356,37 +356,17 @@ densities, and dots you can verify by eye.
 ### Stamping a day label under the count
 
 Adds a manual label (e.g. `Day 10`) centered just below the `Counted ~ N`
-banner on every `*density.jpg`. Run it **once, after step 6** (step 6
-re-writes the frames fresh; running this twice would stamp twice). Set
-`DAY` and the target glob, then run with `.venv/bin/python`:
+banner on every `*density.jpg` in a folder. First argument is the text,
+second is the folder:
 
-```python
-import cv2, glob, os
-
-DAY = "Day 10"                      # <- set this manually
-IMAGES = "counts/*density.jpg"      # which images to stamp
-
-for path in sorted(glob.glob(IMAGES)):
-    img = cv2.imread(path)
-    h, w = img.shape[:2]
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    scale = w / 900.0
-    thick = max(2, int(round(scale * 2)))
-    # same geometry as the "Counted ~" banner, so the day sits just below it
-    (_, bh), _ = cv2.getTextSize("Counted ~ 0", font, scale, thick)
-    banner_baseline = bh + max(12, h // 40)
-    dscale = scale * 0.8
-    dthick = max(1, int(round(dscale * 2)))
-    (dw, dh), _ = cv2.getTextSize(DAY, font, dscale, dthick)
-    org = ((w - dw) // 2, banner_baseline + dh + max(8, h // 80))
-    cv2.putText(img, DAY, org, font, dscale, (0, 0, 0), dthick + 4, cv2.LINE_AA)
-    cv2.putText(img, DAY, org, font, dscale, (255, 255, 255), dthick, cv2.LINE_AA)
-    cv2.imwrite(path, img, [cv2.IMWRITE_JPEG_QUALITY, 90])
-    print("stamped", os.path.basename(path))
+```bash
+.venv/bin/python scripts/stamp_day.py "Day 10" counts/
+.venv/bin/python scripts/stamp_day.py "Day 10" counts_mosaic/   # the mosaic too
 ```
 
-Rebuild the gif afterwards (below) to carry the label into the animation.
-To also stamp the stitched mosaic, set `IMAGES = "counts_mosaic/*density.jpg"`.
+Run it **once, after step 6** — step 6 re-writes the frames fresh, so
+running this twice would stamp the label twice. Rebuild the gif afterwards
+(below) to carry the label into the animation.
 
 ### Converting output images to .gif
 
